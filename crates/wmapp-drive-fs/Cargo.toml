@@ -1,0 +1,9 @@
+[package]
+name = "wmapp-drive-fs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+[dependencies]
+libc = "0.2"
+serde_json = "1"
+base64 = "0.22"

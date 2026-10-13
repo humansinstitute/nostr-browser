@@ -1,0 +1,24 @@
+[package]
+name = "wmapp-fips-ios"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+fips = { path = "vendor/fips" }
+serde_json = "1"
+serde_yaml = "0.9"
+simple-dns = "0.11.2"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+zeroize = "1.9"
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

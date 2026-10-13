@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Generic fullscreen and media check</title>
+<style>body{font:18px system-ui;margin:24px}button,input{font:inherit;margin:8px;padding:8px}#stage{background:#123;color:white;padding:24px}#stage:fullscreen{box-sizing:border-box;width:100%;height:100%;display:grid;place-content:center}video{max-width:100%;max-height:65vh}iframe{width:100%;height:150px}pre{white-space:pre-wrap}</style>
+<h1>Generic browser fullscreen / media</h1>
+<p>Use an actual click. Expect OS fullscreen, no WM tab bar, and restoration after Exit or Escape.</p>
+<div id="stage"><h2>Fullscreen stage</h2><button id="enter">Enter fullscreen</button><button id="exit">Exit fullscreen</button><video id="video" controls playsinline preload="metadata"></video></div>
+<label>Direct HTTPS video URL <input id="url" type="url" placeholder="https://example.org/video.mp4"></label><button id="load">Load media</button>
+<p>Playback requires the player's Play button. Record media errors separately from fullscreen.</p>
+<h2>Allowed iframe</h2><iframe id="allowed" title="Allowed fullscreen frame" allow="fullscreen" allowfullscreen></iframe>
+<h2>Denied iframe</h2><iframe id="denied" title="Denied fullscreen frame" allow="fullscreen 'none'"></iframe>
+<button id="navigate">Navigate to a fresh document</button><pre id="log" role="status"></pre>
+<script>
+const stage=document.querySelector('#stage'), video=document.querySelector('#video'), url=document.querySelector('#url');
+const enter=document.querySelector('#enter'), exit=document.querySelector('#exit'), load=document.querySelector('#load'), navigate=document.querySelector('#navigate');
+const log=m=>document.querySelector('#log').textContent+=m+'\n';
+log('fullscreenEnabled='+document.fullscreenEnabled+'; requestFullscreen='+typeof document.documentElement.requestFullscreen);
+enter.onclick=()=>stage.requestFullscreen().catch(e=>log('request rejected: '+e.name+': '+e.message));
+exit.onclick=()=>document.exitFullscreen().catch(e=>log('exit rejected: '+e.name));
+document.addEventListener('fullscreenchange',()=>log('fullscreenchange: '+Boolean(document.fullscreenElement)));
+document.addEventListener('fullscreenerror',()=>log('fullscreenerror'));
+load.onclick=()=>{const u=new URL(url.value);if(u.protocol!=='https:'){log('Use a direct HTTPS media URL');return}video.src=u.href;video.load()};
+for(const event of ['loadedmetadata','canplay','playing','pause','ended','error'])video.addEventListener(event,()=>log('video '+event+(video.error?' code='+video.error.code:'')));
+for(const id of ['allowed','denied'])document.getElementById(id).srcdoc=`<!doctype html><html><body><button onclick="document.documentElement.requestFullscreen().catch(e=>document.querySelector('p').textContent=e.name)">Fullscreen iframe</button><button onclick="document.exitFullscreen()">Exit</button><p>Click to test ${id} policy</p></body></html>`;
+navigate.onclick=()=>location.reload();
+</script></html>

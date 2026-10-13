@@ -1,0 +1,18 @@
+repository: https://github.com/humansinstitute/nostr-browser
+release_source: ./app/build/app/outputs/flutter-apk/app-release.apk
+name: Nostr Browser
+summary: Native Nostr browser for Flight Deck, WApps, Drive, and Nostr signing.
+description: >-
+  Nostr Browser is the native edge client for Wingman Be Free. It provides an embedded
+  browser for Flight Deck and WApps, local Nostr signer custody, and a mobile
+  workspace shell.
+tags:
+  - nostr
+  - productivity
+  - tools
+supported_nips:
+  - "07"
+  - "98"
+release_notes: ./docs/release-notes/0.1.5.md
+# Configure the verified publisher in a private manifest before publication.
+pubkey: ""

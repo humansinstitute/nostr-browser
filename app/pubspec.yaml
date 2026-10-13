@@ -1,0 +1,47 @@
+name: wingman_app
+description: Native Wingman App shell for Drive, WApps, and signing.
+publish_to: "none"
+version: 0.1.7+9
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  bech32: ^0.2.2
+  bip340: ^0.3.1
+  crypto: ^3.0.7
+  cryptography: ^2.9.0
+  file_selector: ^1.1.0
+  flutter:
+    sdk: flutter
+  flutter_secure_storage: ^10.3.1
+  http: ^1.6.0
+  image_picker: ^1.2.3
+  path_provider: ^2.1.6
+  shared_preferences: ^2.5.5
+  web_socket_channel: ^3.0.3
+  webview_flutter: ^4.8.0
+  webview_flutter_android: ^4.13.0
+  webview_flutter_wkwebview: ^3.14.0
+
+dependency_overrides:
+  # Repository-owned macOS open-panel callback; see docs/webview-file-picker-validation.md.
+  webview_flutter_wkwebview:
+    path: ../packages/webview_flutter_wkwebview
+
+dev_dependencies:
+  flutter_lints: ^4.0.0
+  flutter_secure_storage_platform_interface: ^2.0.1
+  flutter_test:
+    sdk: flutter
+  plugin_platform_interface: ^2.1.8
+  path_provider_platform_interface: ^2.1.3
+  shared_preferences_platform_interface: ^2.4.2
+  webview_flutter_platform_interface: ^2.10.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/app-selector/
+    - assets/flightdeck/
+    - assets/flightdeck/assets/

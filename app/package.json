@@ -1,0 +1,9 @@
+{
+  "name": "wingman-app-flutter-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "flutter build web",
+    "start": "bun run server.ts"
+  }
+}

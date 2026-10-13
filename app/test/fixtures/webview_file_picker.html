@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>WMAPP file picker fixture</title>
+<p><label>Single file <input id="single" type="file"></label></p>
+<p><label>Multiple files <input id="multiple" type="file" multiple></label></p>
+<p><label>Image only <input id="image" type="file" accept="image/*"></label></p>
+<pre id="result">No selection</pre>
+<script>
+  document.querySelectorAll('input').forEach((input) => {
+    input.addEventListener('change', () => {
+      result.textContent = `${input.id}: ${[...input.files].map((file) => file.name).join(', ')}`;
+    });
+  });
+</script>
