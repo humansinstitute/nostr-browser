@@ -14,6 +14,14 @@ const nstackSupportedCapabilities = <String>{
   'events.write',
 };
 
+const _towerCapabilityRequirements = <String, String>{
+  'workspace.read': 'workspace.authenticated_discovery',
+  'storage.read': 'storage.private',
+  'storage.write': 'storage.private',
+  'events.read': 'records.sync',
+  'events.write': 'records.sync',
+};
+
 class NStackException implements Exception {
   const NStackException(this.code, this.message);
   final String code;
@@ -289,6 +297,52 @@ class NStackAccessService extends ChangeNotifier {
     ];
   }
 
+  Future<Map<String, dynamic>> getServiceCatalogue({
+    required String identity,
+    required String origin,
+    required String stackId,
+  }) async {
+    final state = await _state(identity, origin);
+    final internalStackId = _internalId(state.$2.stackIds, stackId);
+    if (internalStackId == null) {
+      throw const NStackException(
+          'not_disclosed', 'The NStack was not disclosed to this origin.');
+    }
+    final stack =
+        state.$1.stacks.where((s) => s.id == internalStackId).firstOrNull;
+    if (stack == null) {
+      throw const NStackException(
+          'stack_unavailable', 'The disclosed NStack is no longer available.');
+    }
+    final status = stack.catalogueStatus;
+    final catalogue = status?.catalogue;
+    return {
+      'stackId': stackId,
+      'checkedAt': status?.checkedAt.toUtc().toIso8601String(),
+      'fetchedAt': catalogue?.fetchedAt.toUtc().toIso8601String(),
+      'stale': catalogue == null || catalogue.isStaleAt(_clock()),
+      if (status?.errorCode != null)
+        'error': {'code': status!.errorCode, 'message': status.errorMessage},
+      'services': [
+        for (final service in catalogue?.services ?? const <NStackService>[])
+          {
+            'id': service.id,
+            'kind': service.kind,
+            'endpoint': service.endpoint,
+            'version': service.version,
+            'protocols': service.protocols,
+            'capabilities': service.capabilities,
+            'features': {'nips': service.nips, 'buds': service.buds},
+            'availability': {
+              'status': service.availability.name,
+              'checkedAt': service.checkedAt?.toUtc().toIso8601String(),
+            },
+            'actionable': service.actionable,
+          },
+      ],
+    };
+  }
+
   Future<Map<String, dynamic>> createHandle({
     required String documentId,
     required String identity,
@@ -326,6 +380,22 @@ class NStackAccessService extends ChangeNotifier {
     if (stack == null) {
       throw const NStackException(
           'stack_unavailable', 'The NStack is no longer available.');
+    }
+    final tower = stack.catalogueStatus?.catalogue?.service('tower');
+    if (tower == null || !tower.actionable) {
+      throw const NStackException('unsupported_capability',
+          'This NStack has not advertised the required Tower authority.');
+    }
+    if (tower.availability == NStackServiceAvailability.unavailable) {
+      throw const NStackException('stack_unavailable',
+          'Tower was unavailable at the last service check.');
+    }
+    for (final capability in requested) {
+      final advertised = _towerCapabilityRequirements[capability];
+      if (advertised == null || !tower.capabilities.contains(advertised)) {
+        throw NStackException('unsupported_capability',
+            'Capability is not advertised by this NStack: $capability.');
+      }
     }
     String? internalWorkspaceId;
     if (workspaceId != null) {

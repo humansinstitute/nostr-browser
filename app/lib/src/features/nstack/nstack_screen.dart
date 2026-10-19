@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../core/app_config.dart';
 import '../../core/nostr_crypto.dart';
 import 'nstack_access.dart';
+import 'nstack_discovery.dart';
 import 'nstack_models.dart';
 import 'nstack_recovery.dart';
 import 'nstack_store.dart';
@@ -15,6 +16,7 @@ class NStackScreen extends StatefulWidget {
     required this.registryStore,
     required this.grantStore,
     required this.accessService,
+    required this.discoveryService,
     required this.recoveryService,
     required this.onRegistryChanged,
     super.key,
@@ -24,6 +26,7 @@ class NStackScreen extends StatefulWidget {
   final NStackRegistryStore registryStore;
   final NStackGrantStore grantStore;
   final NStackAccessService accessService;
+  final NStackDiscoveryService discoveryService;
   final NStackRecoveryService recoveryService;
   final VoidCallback onRegistryChanged;
 
@@ -153,6 +156,11 @@ class _NStackScreenState extends State<NStackScreen> {
               trailing: Wrap(
                 children: [
                   IconButton(
+                    tooltip: 'Refresh services for ${stack.name}',
+                    onPressed: _busy ? null : () => _refreshStack(stack),
+                    icon: const Icon(Icons.refresh),
+                  ),
+                  IconButton(
                     tooltip: 'Edit ${stack.name}',
                     onPressed: _busy ? null : () => _editStack(stack),
                     icon: const Icon(Icons.edit_outlined),
@@ -165,6 +173,7 @@ class _NStackScreenState extends State<NStackScreen> {
                 ],
               ),
             ),
+            _serviceCatalogue(stack),
             ListTile(
               leading: Icon(active
                   ? Icons.radio_button_checked
@@ -206,6 +215,50 @@ class _NStackScreenState extends State<NStackScreen> {
       ),
     );
   }
+
+  Widget _serviceCatalogue(NStackEntry stack) {
+    final status = stack.catalogueStatus;
+    final catalogue = status?.catalogue;
+    final stale = catalogue == null || catalogue.isStaleAt(DateTime.now());
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              catalogue == null
+                  ? 'Services not verified'
+                  : 'Services checked ${status!.checkedAt.toLocal()}${stale ? ' — stale' : ''}',
+              style: Theme.of(context).textTheme.labelLarge,
+            ),
+            if (status?.hasError == true)
+              Text('Last refresh failed: ${status!.errorMessage}',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            if (catalogue != null && catalogue.services.isEmpty)
+              const Text('No supported services advertised.'),
+            for (final service
+                in catalogue?.services ?? const <NStackService>[])
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  '${_serviceLabel(service)} — ${service.availability.name}\n${service.endpoint}',
+                  key: ValueKey('nstack-service-${stack.id}-${service.id}'),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _serviceLabel(NStackService service) => switch (service.id) {
+        'tower' => 'Tower',
+        'relay' => 'Relay',
+        'blossom' => 'Blossom',
+        _ => service.id,
+      };
 
   Widget _recoveryCard() {
     final published = _status?['last_published_at']?.toString();
@@ -310,15 +363,30 @@ class _NStackScreenState extends State<NStackScreen> {
     );
     if (result == null) return;
     await _run(() async {
-      await widget.registryStore.addOrUpdate(
+      final saved = await widget.registryStore.addOrUpdate(
         widget.config.deviceNpub,
         result,
         makeActive: existing == null && _registry.stacks.isEmpty,
       );
+      await widget.discoveryService.refresh(widget.config.deviceNpub,
+          saved.stacks.firstWhere((s) => s.id == result.id).id);
       widget.onRegistryChanged();
-      _message = '${result.name} saved.';
+      final refreshed =
+          await widget.registryStore.load(widget.config.deviceNpub);
+      final entry = refreshed.stacks.firstWhere((s) => s.id == result.id);
+      _message = entry.catalogueStatus?.hasError == true
+          ? '${result.name} saved; service discovery failed.'
+          : '${result.name} saved and services checked.';
     });
   }
+
+  Future<void> _refreshStack(NStackEntry stack) => _run(() async {
+        final refreshed = await widget.discoveryService
+            .refresh(widget.config.deviceNpub, stack.id);
+        _message = refreshed.catalogueStatus?.hasError == true
+            ? '${stack.name} kept its last verified catalogue; refresh failed.'
+            : '${stack.name} services refreshed.';
+      });
 
   Future<void> _removeStack(NStackEntry stack) async {
     final confirmed = await showDialog<bool>(
@@ -566,6 +634,9 @@ class _NStackEditorState extends State<_NStackEditor> {
         peerNpub: peer.isEmpty ? null : peer,
         workspaces: workspaces,
         settings: widget.existing?.settings ?? const NStackBrowserSettings(),
+        catalogueStatus: widget.existing?.url == url
+            ? widget.existing?.catalogueStatus
+            : null,
       ),
     );
   }

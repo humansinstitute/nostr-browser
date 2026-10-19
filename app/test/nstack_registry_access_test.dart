@@ -102,6 +102,17 @@ void main() {
       throwsA(isA<NStackException>()
           .having((error) => error.code, 'code', 'stale_handle')),
     );
+    final replacement = await service.createHandle(
+      documentId: 'document-b',
+      identity: identity,
+      origin: 'https://app-a.example',
+      stackId: a['id'] as String,
+      capabilities: const ['events.read'],
+    );
+    expect(replacement['handle'], isNotEmpty);
+    service.revokeIdentity(identity);
+    expect(service.activeHandles, isEmpty,
+        reason: 'identity/lock lifecycle must revoke document handles');
   });
 
   test('listing before consent and unsupported capability fail closed',
@@ -127,6 +138,15 @@ void main() {
       throwsA(isA<NStackException>()
           .having((error) => error.code, 'code', 'not_disclosed')),
     );
+    expect(
+      () => service.getServiceCatalogue(
+        identity: identity,
+        origin: 'https://app.example',
+        stackId: 'anything',
+      ),
+      throwsA(isA<NStackException>()
+          .having((error) => error.code, 'code', 'not_disclosed')),
+    );
     await service.disclose(
       identity: identity,
       origin: 'https://app.example',
@@ -135,6 +155,14 @@ void main() {
     );
     final stackId = (await service.listNStacks(identity, 'https://app.example'))
         .single['id'] as String;
+    final catalogue = await service.getServiceCatalogue(
+      identity: identity,
+      origin: 'https://app.example',
+      stackId: stackId,
+    );
+    expect(catalogue['stackId'], stackId);
+    expect(jsonEncode(catalogue), isNot(contains('internal-a')));
+    expect((catalogue['services'] as List).single['id'], 'tower');
     expect(
       () => service.createHandle(
         documentId: 'doc',
@@ -154,12 +182,67 @@ void main() {
     );
   });
 
+  test('unavailable or unadvertised Tower capability is rejected', () async {
+    const identity = 'npub-identity';
+    final registry = NStackRegistryStore();
+    final base = _stack('internal-a', 'Host');
+    final tower = base.catalogueStatus!.catalogue!.services.single;
+    await registry.addOrUpdate(
+      identity,
+      base.copyWith(
+        catalogueStatus: NStackCatalogueStatus(
+          checkedAt: DateTime.utc(2026, 10, 19),
+          catalogue: NStackServiceCatalogue(
+            generatedAt: DateTime.utc(2026, 10, 19),
+            fetchedAt: DateTime.utc(2026, 10, 19),
+            cacheTtlSeconds: 30,
+            services: [
+              NStackService(
+                id: tower.id,
+                kind: tower.kind,
+                endpoint: tower.endpoint,
+                version: tower.version,
+                protocols: tower.protocols,
+                capabilities: tower.capabilities,
+                availability: NStackServiceAvailability.unavailable,
+                checkedAt: tower.checkedAt,
+                actionable: true,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    final service = NStackAccessService(
+        registryStore: registry, grantStore: NStackGrantStore());
+    await service.disclose(
+      identity: identity,
+      origin: 'https://app.example',
+      stackInternalIds: const ['internal-a'],
+      includeWorkspaces: false,
+    );
+    final alias = (await service.listNStacks(identity, 'https://app.example'))
+        .single['id'] as String;
+    expect(
+      () => service.createHandle(
+        documentId: 'doc',
+        identity: identity,
+        origin: 'https://app.example',
+        stackId: alias,
+        capabilities: const ['workspace.read'],
+      ),
+      throwsA(isA<NStackException>()
+          .having((error) => error.code, 'code', 'stack_unavailable')),
+    );
+  });
+
   test('bridge shape exposes v1 methods without inventory or transport', () {
     final script = nstackBridgeScript(
         documentId: 'document-secret', pageOrigin: 'https://app.example');
     for (final method in const [
       'requestDiscovery',
       'listNStacks',
+      'getServiceCatalogue',
       'listWorkspaces',
       'requestCapabilities',
       'revoke',
@@ -177,6 +260,31 @@ NStackEntry _stack(String id, String name) => NStackEntry(
       id: id,
       name: name,
       url: 'https://host.example',
+      catalogueStatus: NStackCatalogueStatus(
+        checkedAt: DateTime.utc(2026, 10, 19),
+        catalogue: NStackServiceCatalogue(
+          generatedAt: DateTime.utc(2026, 10, 19),
+          fetchedAt: DateTime.utc(2026, 10, 19),
+          cacheTtlSeconds: 30,
+          services: [
+            NStackService(
+              id: 'tower',
+              kind: 'tower',
+              endpoint: 'https://host.example',
+              version: '1.0.0',
+              protocols: const ['https', 'nip-98'],
+              capabilities: const [
+                'workspace.authenticated_discovery',
+                'records.sync',
+                'storage.private',
+              ],
+              availability: NStackServiceAvailability.available,
+              checkedAt: DateTime.utc(2026, 10, 19),
+              actionable: true,
+            ),
+          ],
+        ),
+      ),
       workspaces: const [
         NStackWorkspace(
             id: 'workspace-internal', name: 'Main', remoteId: 'workspace-1'),

@@ -11,7 +11,8 @@ class NStackRegistryStore extends ChangeNotifier {
   NStackRegistryStore({SharedPreferencesAsync? preferences})
       : _preferences = preferences ?? SharedPreferencesAsync();
 
-  static const keyPrefix = 'wingman.nstack.registry.v1.';
+  static const keyPrefix = 'wingman.nstack.registry.v2.';
+  static const legacyKeyPrefix = 'wingman.nstack.registry.v1.';
   final SharedPreferencesAsync _preferences;
   final Map<String, NStackRegistry> _cache = {};
 
@@ -21,16 +22,23 @@ class NStackRegistryStore extends ChangeNotifier {
     final cached = _cache[identity];
     if (cached != null) return cached;
     final raw = await _preferences.getString('$keyPrefix$identity');
-    final registry = raw == null
-        ? const NStackRegistry()
-        : NStackRegistry.decode(raw) ?? const NStackRegistry();
+    var registry = raw == null ? null : NStackRegistry.decode(raw);
+    if (registry == null && raw == null) {
+      final legacy = await _preferences.getString('$legacyKeyPrefix$identity');
+      registry = legacy == null ? null : NStackRegistry.decode(legacy);
+      if (registry != null) {
+        await _preferences.setString(
+            '$keyPrefix$identity', jsonEncode(registry.toJson()));
+      }
+    }
+    registry ??= const NStackRegistry();
     _cache[identity] = registry;
     return registry;
   }
 
   Future<void> replaceAtomic(String signerNpub, NStackRegistry registry) async {
     final identity = signerNpub.trim();
-    if (identity.isEmpty || registry.version != 1) {
+    if (identity.isEmpty || registry.version != nstackRegistryVersion) {
       throw StateError('A valid identity and registry are required.');
     }
     final encoded = jsonEncode(registry.toJson());
@@ -40,6 +48,29 @@ class NStackRegistryStore extends ChangeNotifier {
     await _preferences.setString('$keyPrefix$identity', encoded);
     _cache[identity] = registry;
     notifyListeners();
+  }
+
+  Future<NStackEntry> updateCatalogue(
+    String signerNpub,
+    String stackId,
+    NStackCatalogueStatus status, {
+    required String expectedUrl,
+  }) async {
+    final current = await load(signerNpub);
+    final existing = current.stacks.where((stack) => stack.id == stackId);
+    if (existing.isEmpty) throw StateError('NStack no longer exists.');
+    if (existing.first.url != expectedUrl) {
+      throw StateError('NStack origin changed during service discovery.');
+    }
+    final updated = existing.first.copyWith(catalogueStatus: status);
+    await replaceAtomic(
+      signerNpub,
+      current.next(stacks: [
+        for (final stack in current.stacks)
+          if (stack.id == stackId) updated else stack,
+      ]),
+    );
+    return updated;
   }
 
   Future<NStackRegistry> addOrUpdate(

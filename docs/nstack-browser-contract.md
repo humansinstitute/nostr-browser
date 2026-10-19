@@ -45,6 +45,25 @@ interface WorkspaceSummary {
   name: string;
 }
 
+interface ServiceCatalogue {
+  stackId: string; // the same origin/identity-scoped alias passed by the site
+  checkedAt: string | null;
+  fetchedAt: string | null;
+  stale: boolean;
+  error?: {code: string; message: string};
+  services: Array<{
+    id: string;
+    kind: string;
+    endpoint: string;
+    version: string;
+    protocols: string[];
+    capabilities: string[];
+    features: {nips: number[]; buds: number[]};
+    availability: {status: "available" | "unavailable" | "unknown"; checkedAt: string | null};
+    actionable: boolean;
+  }>;
+}
+
 interface CapabilityResult {
   handle: string;   // random, browser-held and document scoped
   stackId: string;
@@ -67,6 +86,7 @@ interface WindowNStackV1 {
     workspaces: boolean;
   }>;
   listNStacks(): Promise<NStackSummary[]>;
+  getServiceCatalogue(input: {stackId: string}): Promise<ServiceCatalogue>;
   listWorkspaces(input: {stackId: string}): Promise<WorkspaceSummary[]>;
   requestCapabilities(input: {
     stackId: string;
@@ -82,6 +102,40 @@ interface WindowNStackV1 {
 Supported v1 capability names are `workspace.read`, `storage.read`,
 `storage.write`, `events.read`, and `events.write`. A request containing any
 other name fails as a whole with `unsupported_capability`.
+
+The additive `getServiceCatalogue` method does not change the provider protocol
+version. It is unavailable before discovery consent and accepts only an opaque
+stack alias already disclosed to the calling origin and signer identity. It
+never exposes the browser-global registry ID.
+
+The existing abstract capabilities are Tower-authority capabilities. They map
+to descriptor declarations as follows: `workspace.read` requires
+`workspace.authenticated_discovery`; `storage.read` and `storage.write` require
+`storage.private`; and `events.read` and `events.write` require `records.sync`.
+Relay `events.*` and Blossom `blob.*` declarations do not imply Tower workspace,
+storage, or record authority. A missing declaration fails with
+`unsupported_capability`; a Tower observation of `unavailable` fails with
+`stack_unavailable`. Descriptor availability is only a recent observation and
+never substitutes for the separate native capability approval.
+
+## Service discovery and freshness
+
+Adding or refreshing a stack performs one bounded normal HTTPS request to
+`/.well-known/nstack.json` at the configured root NStack origin. NBrowser does
+not follow redirects or a descriptor-advertised replacement Tower origin and
+does not add a native service-specific bridge. Schema v1 is strictly checked,
+including the exact schema name/version, bounded fields and arrays, unique
+service IDs, safe root HTTPS/WSS origins (with existing loopback development
+exceptions), known ID/kind pairs, availability values, and a 128 KiB/five
+second fetch limit. Tower must advertise the configured origin exactly.
+
+Tower, relay and Blossom v1 entries are actionable. Safely formed future
+services can be displayed but have `actionable: false` and cannot grant a
+capability. A successful catalogue stores fetched/check times and a locally
+bounded descriptor TTL (5 seconds to one hour). After expiry it is marked
+stale. A failed refresh records a bounded error and check time while retaining
+the last-known-good catalogue; a first failure leaves services empty and does
+not invent capabilities.
 
 ## Consent and lifecycle
 
@@ -126,6 +180,13 @@ active handles, origin grants, signatures, tokens, browsing sessions, cookies,
 cache, and unrelated application settings. Existing identity-scoped v1 browser
 links are copied into the first active NStack once and retained in their legacy
 record for rollback.
+
+Registry persistence is version 2. On first load, a valid v1 registry is copied
+to the v2 key and normalized without modifying or deleting the v1 bytes. The v2
+record adds only validated public service catalogue/check metadata. Snapshot
+parsing accepts v1 registries for recovery and normalizes them to v2. Catalogue
+backup still excludes origin grants, live handles, credentials, signatures,
+tokens and secrets.
 
 NBrowser self-encrypts the canonical snapshot with NIP-44 v2, then uses Tower's
 existing immutable private object flow: signed prepare, signed upload,

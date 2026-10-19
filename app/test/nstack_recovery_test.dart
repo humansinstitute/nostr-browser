@@ -149,6 +149,52 @@ void main() {
       expect(json.toLowerCase(), isNot(contains(forbidden)));
     }
   });
+
+  test('snapshot restores safe catalogue metadata without authority state', () {
+    final identity = NostrCrypto.importIdentity(_secret);
+    final at = DateTime.utc(2026, 10, 19);
+    final stack = _hostStack.copyWith(
+      catalogueStatus: NStackCatalogueStatus(
+        checkedAt: at,
+        catalogue: NStackServiceCatalogue(
+          generatedAt: at,
+          fetchedAt: at,
+          cacheTtlSeconds: 30,
+          services: [
+            NStackService(
+              id: 'tower',
+              kind: 'tower',
+              endpoint: _hostStack.url,
+              version: '1.0.0',
+              protocols: const ['https', 'nip-98'],
+              capabilities: const ['storage.private'],
+              availability: NStackServiceAvailability.available,
+              checkedAt: at,
+              actionable: true,
+            ),
+          ],
+        ),
+      ),
+    );
+    final encoded = NStackSettingsSnapshot(
+      identityNpub: identity.npub,
+      createdAt: at,
+      registry: NStackRegistry(stacks: [stack]),
+    ).canonicalJson();
+    final restored = NStackSettingsSnapshot.parse(encoded, identity.npub);
+    expect(
+        restored.registry.stacks.single.catalogueStatus?.catalogue?.services
+            .single.id,
+        'tower');
+    for (final forbidden in [
+      'bearer',
+      'password',
+      'origin_grant',
+      'signature'
+    ]) {
+      expect(encoded.toLowerCase(), isNot(contains(forbidden)));
+    }
+  });
 }
 
 const _secret =

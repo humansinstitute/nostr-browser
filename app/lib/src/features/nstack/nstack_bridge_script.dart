@@ -47,6 +47,7 @@ String nstackBridgeScript({
     isAvailable: () => Promise.resolve({ available: true, version: 1 }),
     requestDiscovery: (options) => call('requestDiscovery', options),
     listNStacks: () => call('listNStacks'),
+    getServiceCatalogue: (options) => call('getServiceCatalogue', options),
     listWorkspaces: (options) => call('listWorkspaces', options),
     requestCapabilities: (options) => call('requestCapabilities', options),
     revoke: (options) => call('revoke', options),

@@ -2150,6 +2150,18 @@ class BrowserScreenState extends State<BrowserScreen>
         case 'nstack.listNStacks':
           result = await _nstackAccessService.listNStacks(identity, origin);
           break;
+        case 'nstack.getServiceCatalogue':
+          final stackId = params['stackId']?.toString() ?? '';
+          if (stackId.isEmpty) {
+            throw const NStackException(
+                'invalid_request', 'stackId is required.');
+          }
+          result = await _nstackAccessService.getServiceCatalogue(
+            identity: identity,
+            origin: origin,
+            stackId: stackId,
+          );
+          break;
         case 'nstack.listWorkspaces':
           final stackId = params['stackId']?.toString() ?? '';
           if (stackId.isEmpty) {
