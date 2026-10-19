@@ -36,6 +36,9 @@ import 'signer_store.dart';
 import 'webview_file_picker.dart';
 import 'grasp_fips_browser_bridge.dart';
 import 'grasp_android_channel.dart';
+import '../nstack/nstack_access.dart';
+import '../nstack/nstack_bridge_script.dart';
+import '../nstack/nstack_store.dart';
 
 class BrowserScreen extends StatefulWidget {
   const BrowserScreen({
@@ -56,6 +59,8 @@ class BrowserScreen extends StatefulWidget {
     this.profileRelayClient,
     this.signerVault,
     this.towerProxyFactory,
+    this.nstackRegistryStore,
+    this.nstackAccessService,
     super.key,
   });
 
@@ -79,6 +84,8 @@ class BrowserScreen extends StatefulWidget {
   @visibleForTesting
   final Future<TowerFipsProxy> Function(String endpoint, String pageOrigin)?
       towerProxyFactory;
+  final NStackRegistryStore? nstackRegistryStore;
+  final NStackAccessService? nstackAccessService;
 
   @override
   State<BrowserScreen> createState() => BrowserScreenState();
@@ -111,6 +118,14 @@ class BrowserScreenState extends State<BrowserScreen>
       widget.profileRelayClient ?? NostrProfileRelayClient();
   int _profileEpoch = 0;
   final BrowserBookmarkStore _bookmarkStore = BrowserBookmarkStore();
+  late final NStackRegistryStore _nstackRegistryStore =
+      widget.nstackRegistryStore ?? NStackRegistryStore();
+  late final NStackAccessService _nstackAccessService =
+      widget.nstackAccessService ??
+          NStackAccessService(
+            registryStore: _nstackRegistryStore,
+            grantStore: NStackGrantStore(),
+          );
   List<BrowserBookmark> _bookmarks = const [];
   String? _selectorBackground;
   String? _defaultSelectorBackground;
@@ -144,6 +159,8 @@ class BrowserScreenState extends State<BrowserScreen>
     });
     _fipsEnabledSubscription =
         widget.fipsRuntime?.enabledChanges.listen(_onFipsEnabledChanged);
+    _nstackAccessService.addListener(_notifyNStackDocuments);
+    _nstackAccessService.grantStore.addListener(_notifyNStackDocuments);
     unawaited(_loadFipsEnabled());
     _restoringTabs = true;
     _createHomeTab(activate: true, persistState: false);
@@ -199,6 +216,8 @@ class BrowserScreenState extends State<BrowserScreen>
     _addressBarHideTimer?.cancel();
     _diagnosticsMaintenance?.cancel();
     _tabStripController.dispose();
+    _nstackAccessService.removeListener(_notifyNStackDocuments);
+    _nstackAccessService.grantStore.removeListener(_notifyNStackDocuments);
     for (final tab in _tabs) {
       tab.dispose();
     }
@@ -244,6 +263,8 @@ class BrowserScreenState extends State<BrowserScreen>
   Future<void> _refreshDocumentProviders(BrowserTab tab, bool enabled) async {
     final epoch = tab.signerDocumentEpoch;
     if (enabled) await _injectGraspBridge(tab);
+    if (!mounted || tab.disposed || tab.signerDocumentEpoch != epoch) return;
+    await _injectNStack(tab);
     if (!mounted || tab.disposed || tab.signerDocumentEpoch != epoch) return;
     await _injectIfTrusted(tab);
   }
@@ -620,7 +641,7 @@ class BrowserScreenState extends State<BrowserScreen>
     }
     final updated = List<BrowserBookmark>.of(_bookmarks)..[current] = edited;
     try {
-      await _bookmarkStore.save(identity, updated);
+      await _saveBookmarksForIdentity(identity, updated);
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -645,21 +666,50 @@ class BrowserScreenState extends State<BrowserScreen>
     final background = await _bookmarkStore.loadBackground(signerNpub);
     final colour = await _bookmarkStore.loadLabelColour(signerNpub);
     final builtInStartup = await _bookmarkStore.loadBuiltInStartup(signerNpub);
+    await _nstackRegistryStore.migrateLegacyBrowserSettings(
+      signerNpub,
+      bookmarks: bookmarks,
+      background: background,
+      labelColour: colour,
+      builtInStartup: builtInStartup,
+    );
+    final registry = await _nstackRegistryStore.load(signerNpub);
+    final stackSettings = registry.activeStack?.settings;
     if (!mounted ||
         epoch != _signerSyncEpoch ||
         widget.config.deviceNpub.trim() != signerNpub.trim()) {
       return;
     }
-    _bookmarks = bookmarks;
-    _selectorBackground = background;
-    _labelColour = colour;
-    _builtInStartup = builtInStartup;
+    _bookmarks = stackSettings?.bookmarks ?? bookmarks;
+    _selectorBackground = stackSettings?.background ?? background;
+    _labelColour = stackSettings?.labelColour ?? colour;
+    _builtInStartup = stackSettings?.builtInStartup ?? builtInStartup;
     _reloadHomeTabs();
     _notifyBookmarkMenuState();
   }
 
   Future<void> _persistBookmarks() {
-    return _bookmarkStore.save(widget.config.deviceNpub, _bookmarks);
+    return _saveBookmarksForIdentity(widget.config.deviceNpub, _bookmarks);
+  }
+
+  Future<void> _saveBookmarksForIdentity(
+      String identity, List<BrowserBookmark> bookmarks) async {
+    final registry = await _nstackRegistryStore.load(identity);
+    if (registry.activeStack != null) {
+      await _nstackRegistryStore.updateActiveSettings(
+        identity,
+        (settings) => settings.copyWith(
+          bookmarks: List.unmodifiable(bookmarks),
+        ),
+      );
+    } else {
+      await _bookmarkStore.save(identity, bookmarks);
+    }
+  }
+
+  Future<void> reloadNStackSettings() async {
+    await _loadBookmarksForSigner(widget.config.deviceNpub);
+    _notifyNStackDocuments();
   }
 
   void _reloadHomeTabs() {
@@ -932,6 +982,7 @@ class BrowserScreenState extends State<BrowserScreen>
       addressController: TextEditingController(text: url),
       addressFocusNode: FocusNode(),
       title: title ?? 'New tab',
+      onRevokeNStackDocument: _nstackAccessService.revokeDocument,
     );
     tab.nativeChannelsReady = _configureNativeChannels(tab);
     tab.addressFocusNode.addListener(() => _onAddressFocusChanged(tab.id));
@@ -963,6 +1014,7 @@ class BrowserScreenState extends State<BrowserScreen>
       addressFocusNode: FocusNode(),
       title: _homeTitle,
       isHome: true,
+      onRevokeNStackDocument: _nstackAccessService.revokeDocument,
     );
     tab.nativeChannelsReady = _configureNativeChannels(tab);
     tab.addressFocusNode.addListener(() => _onAddressFocusChanged(tab.id));
@@ -1686,6 +1738,8 @@ class BrowserScreenState extends State<BrowserScreen>
     if (!currentDocument()) return;
     await _injectGraspBridge(tab);
     if (!currentDocument()) return;
+    await _injectNStack(tab);
+    if (!currentDocument()) return;
     await _injectIfTrusted(tab);
     if (currentDocument() &&
         _bookmarks.any((b) => b.url == canonicalBrowserBookmarkUrl(url))) {
@@ -1958,14 +2012,283 @@ class BrowserScreenState extends State<BrowserScreen>
     });
   }
 
+  Future<void> _injectNStack(BrowserTab tab) async {
+    if (!await tab.nativeChannelsReady || tab.disposed) return;
+    final epoch = tab.signerDocumentEpoch;
+    final url = await tab.controller.currentUrl();
+    if (!mounted ||
+        tab.disposed ||
+        tab.signerDocumentEpoch != epoch ||
+        url == null) {
+      return;
+    }
+    final origin = normalizeNStackOrigin(url);
+    if (origin.isEmpty) return;
+    final documentId = tab.nstackDocumentId ??= TowerFipsProxy.capability();
+    await tab.controller.runJavaScript(
+      nstackBridgeScript(documentId: documentId, pageOrigin: origin),
+    );
+  }
+
+  void _notifyNStackDocuments() {
+    for (final tab in List<BrowserTab>.of(_tabs)) {
+      if (tab.disposed || tab.nstackDocumentId == null) continue;
+      unawaited(tab.controller
+          .runJavaScript(
+            'window.__nstackChange && window.__nstackChange({reason:"changed"});',
+          )
+          .catchError((Object _) {}));
+    }
+  }
+
+  Future<void> _resolveNStackRequest(
+    BrowserTab tab,
+    String id, {
+    Object? result,
+    NStackException? error,
+  }) async {
+    await tab.controller.runJavaScript(
+      'window.__nstackResolve && window.__nstackResolve('
+      '${jsonEncode(id)}, ${jsonEncode(error == null ? {'result': result} : {
+          'error': error.toJson()
+        })});',
+    );
+  }
+
+  Future<void> _onNStackMessage(
+      BrowserTab tab, String requestId, Map<String, dynamic> payload) async {
+    final method = payload['method']?.toString() ?? '';
+    final documentId = payload['documentId']?.toString();
+    final currentUrl = tab.currentUrl;
+    final origin = normalizeNStackOrigin(currentUrl ?? '');
+    if (origin.isEmpty ||
+        documentId == null ||
+        tab.nstackDocumentId != documentId ||
+        tab.disposed) {
+      await _resolveNStackRequest(tab, requestId,
+          error: const NStackException(
+              'stale_handle', 'Document was replaced or revoked.'));
+      return;
+    }
+    if (!widget.config.hasDeviceSecret) {
+      await _resolveNStackRequest(tab, requestId,
+          error: const NStackException(
+              'locked', 'Unlock the active Nostr identity first.'));
+      return;
+    }
+    final identity = widget.config.deviceNpub;
+    bool current() =>
+        mounted &&
+        !tab.disposed &&
+        tab.nstackDocumentId == documentId &&
+        tab.currentUrl == currentUrl &&
+        widget.config.hasDeviceSecret &&
+        widget.config.deviceNpub == identity;
+    final params = payload['params'] is Map<String, dynamic>
+        ? payload['params'] as Map<String, dynamic>
+        : <String, dynamic>{};
+    try {
+      Object? result;
+      switch (method) {
+        case 'nstack.requestDiscovery':
+          final registry = await _nstackRegistryStore.load(identity);
+          if (!current()) return;
+          if (!mounted) return;
+          if (registry.stacks.isEmpty) {
+            throw const NStackException(
+                'unavailable', 'No NStacks are configured in Nostr Browser.');
+          }
+          final selected = registry.stacks.map((stack) => stack.id).toSet();
+          final approved = await showDialog<Set<String>>(
+            context: context,
+            builder: (context) => StatefulBuilder(
+              builder: (context, setDialogState) => AlertDialog(
+                title: const Text('Share NStack discovery?'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                        '$origin requests the NStacks you select. This does not grant service access.'),
+                    for (final stack in registry.stacks)
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: selected.contains(stack.id),
+                        onChanged: (value) => setDialogState(() {
+                          if (value == true) {
+                            selected.add(stack.id);
+                          } else {
+                            selected.remove(stack.id);
+                          }
+                        }),
+                        title: Text(stack.name),
+                      ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Deny')),
+                  FilledButton(
+                    onPressed: selected.isEmpty
+                        ? null
+                        : () => Navigator.pop(context, selected),
+                    child: const Text('Share selection'),
+                  ),
+                ],
+              ),
+            ),
+          );
+          if (!current()) return;
+          result = await _nstackAccessService.applyDiscoveryDecision(
+            identity: identity,
+            origin: origin,
+            approvedStackInternalIds: approved,
+            includeWorkspaces: params['workspaces'] == true,
+          );
+          break;
+        case 'nstack.listNStacks':
+          result = await _nstackAccessService.listNStacks(identity, origin);
+          break;
+        case 'nstack.listWorkspaces':
+          final stackId = params['stackId']?.toString() ?? '';
+          if (stackId.isEmpty) {
+            throw const NStackException(
+                'invalid_request', 'stackId is required.');
+          }
+          result = await _nstackAccessService.listWorkspaces(
+            identity: identity,
+            origin: origin,
+            stackId: stackId,
+          );
+          break;
+        case 'nstack.requestCapabilities':
+          final stackId = params['stackId']?.toString() ?? '';
+          final workspaceId = params['workspaceId']?.toString();
+          final rawCapabilities = params['capabilities'];
+          if (stackId.isEmpty || rawCapabilities is! List) {
+            throw const NStackException(
+                'invalid_request', 'stackId and capabilities are required.');
+          }
+          final capabilities = rawCapabilities
+              .map((value) => value.toString())
+              .toList(growable: false);
+          final durationSeconds = params['duration'] is num
+              ? (params['duration'] as num).toInt()
+              : 900;
+          final unsupported = capabilities
+              .where((value) => !nstackSupportedCapabilities.contains(value))
+              .toList();
+          if (unsupported.isNotEmpty) {
+            throw NStackException('unsupported_capability',
+                'Unsupported capability: ${unsupported.first}.');
+          }
+          if (capabilities.isEmpty ||
+              durationSeconds <= 0 ||
+              durationSeconds > const Duration(hours: 8).inSeconds) {
+            throw const NStackException(
+                'invalid_request', 'Capabilities or duration are invalid.');
+          }
+          final disclosed =
+              await _nstackAccessService.listNStacks(identity, origin);
+          if (!disclosed.any((stack) => stack['id'] == stackId)) {
+            throw const NStackException(
+                'not_disclosed', 'The NStack was not disclosed.');
+          }
+          if (workspaceId != null && workspaceId.isNotEmpty) {
+            final disclosedWorkspaces =
+                await _nstackAccessService.listWorkspaces(
+              identity: identity,
+              origin: origin,
+              stackId: stackId,
+            );
+            if (!disclosedWorkspaces
+                .any((workspace) => workspace['id'] == workspaceId)) {
+              throw const NStackException(
+                  'not_disclosed', 'The workspace was not disclosed.');
+            }
+          }
+          if (!current()) return;
+          if (!mounted) return;
+          final approved = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Grant NStack capabilities?'),
+                  content: Text(
+                    '$origin requests:\n\n${capabilities.join('\n')}\n\n'
+                    'This creates a handle for this document only. It does not expose credentials or reusable signatures.',
+                  ),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('Deny')),
+                    FilledButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('Allow once')),
+                  ],
+                ),
+              ) ??
+              false;
+          if (!current()) return;
+          if (!approved) {
+            throw const NStackException(
+                'consent_denied', 'Capability request was denied.');
+          }
+          result = await _nstackAccessService.createHandle(
+            documentId: documentId,
+            identity: identity,
+            origin: origin,
+            stackId: stackId,
+            workspaceId:
+                workspaceId == null || workspaceId.isEmpty ? null : workspaceId,
+            capabilities: capabilities,
+            duration: Duration(seconds: durationSeconds),
+          );
+          break;
+        case 'nstack.revoke':
+          final handle = params['handle']?.toString() ?? '';
+          if (handle.isEmpty) {
+            throw const NStackException(
+                'invalid_request', 'handle is required.');
+          }
+          _nstackAccessService.revokeHandle(
+            documentId: documentId,
+            identity: identity,
+            origin: origin,
+            handle: handle,
+          );
+          result = true;
+          break;
+        default:
+          throw const NStackException(
+              'invalid_request', 'Unsupported NStack method.');
+      }
+      if (current()) {
+        await _resolveNStackRequest(tab, requestId, result: result);
+      }
+    } on NStackException catch (error) {
+      if (current()) {
+        await _resolveNStackRequest(tab, requestId, error: error);
+      }
+    } catch (_) {
+      if (current()) {
+        await _resolveNStackRequest(tab, requestId,
+            error: const NStackException(
+                'unavailable', 'NStack request could not be completed.'));
+      }
+    }
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     for (final tab in _tabs) {
       _recordHostDiagnostic(tab, 'lifecycle');
-      // Background/OS lock cannot retain a diagnostics retrieval grant.
       if (state != AppLifecycleState.resumed) {
+        // Background/OS lock cannot retain any document capability.
         tab.clearDiagnosticsTransition();
-        tab.revokeDiagnostics();
+        tab.revokeSigningDocument();
+      } else if (!tab.isHome) {
+        unawaited(_refreshDocumentProviders(tab, _fipsEnabled));
       }
     }
   }
@@ -2215,6 +2538,11 @@ class BrowserScreenState extends State<BrowserScreen>
     final method = payload['method']?.toString() ?? '';
     if (requestId.isEmpty || method.isEmpty) return;
 
+    if (method.startsWith('nstack.')) {
+      await _onNStackMessage(tab, requestId, payload);
+      return;
+    }
+
     if (method.startsWith('diagnostics.')) {
       final verified = await tab.nativeChannelsReady;
       if (!verified ||
@@ -2310,7 +2638,13 @@ class BrowserScreenState extends State<BrowserScreen>
                 safeLabelColour(colour) != colour.toLowerCase()) {
               return;
             }
-            await _bookmarkStore.saveLabelColour(identity, colour);
+            final registry = await _nstackRegistryStore.load(identity);
+            if (registry.activeStack != null) {
+              await _nstackRegistryStore.updateActiveSettings(identity,
+                  (settings) => settings.copyWith(labelColour: colour));
+            } else {
+              await _bookmarkStore.saveLabelColour(identity, colour);
+            }
             if (current()) _labelColour = safeLabelColour(colour);
           } else {
             final url = canonicalBrowserBookmarkUrl(params['url']?.toString());
@@ -2321,7 +2655,13 @@ class BrowserScreenState extends State<BrowserScreen>
               return;
             }
             if (url == _localFlightDeckBookmark?.url) {
-              await _bookmarkStore.saveBuiltInStartup(identity, enabled);
+              final registry = await _nstackRegistryStore.load(identity);
+              if (registry.activeStack != null) {
+                await _nstackRegistryStore.updateActiveSettings(identity,
+                    (settings) => settings.copyWith(builtInStartup: enabled));
+              } else {
+                await _bookmarkStore.saveBuiltInStartup(identity, enabled);
+              }
               if (current()) _builtInStartup = enabled;
             } else {
               final updated = [
@@ -2336,7 +2676,7 @@ class BrowserScreenState extends State<BrowserScreen>
                         customImage: app.customImage,
                         startup: enabled)
               ];
-              await _bookmarkStore.save(identity, updated);
+              await _saveBookmarksForIdentity(identity, updated);
               if (current()) _bookmarks = updated;
             }
           }
@@ -2387,7 +2727,18 @@ class BrowserScreenState extends State<BrowserScreen>
             identity != widget.config.deviceNpub) {
           return;
         }
-        await _bookmarkStore.saveBackground(identity, image);
+        final registry = await _nstackRegistryStore.load(identity);
+        if (registry.activeStack != null) {
+          await _nstackRegistryStore.updateActiveSettings(
+            identity,
+            (settings) => settings.copyWith(
+              background: image,
+              clearBackground: image == null,
+            ),
+          );
+        } else {
+          await _bookmarkStore.saveBackground(identity, image);
+        }
         if (!mounted || identity != widget.config.deviceNpub) return;
         _selectorBackground = image;
         _reloadHomeTabs();
@@ -4299,6 +4650,7 @@ class BrowserTab {
     required this.addressController,
     required this.addressFocusNode,
     required this.title,
+    this.onRevokeNStackDocument,
     this.isHome = false,
   });
 
@@ -4306,6 +4658,7 @@ class BrowserTab {
   final WebViewController controller;
   final TextEditingController addressController;
   final FocusNode addressFocusNode;
+  final ValueChanged<String>? onRevokeNStackDocument;
   String title;
   String prefix = '';
   String? colour;
@@ -4315,6 +4668,7 @@ class BrowserTab {
   bool isHome;
   GraspFipsBrowserBridge? graspBridge;
   String? signerDocumentToken;
+  String? nstackDocumentId;
   int signerDocumentEpoch = 0;
   String diagnosticsTabKey = TowerFipsProxy.capability();
   int diagnosticsConfigEpoch = 0;
@@ -4344,6 +4698,9 @@ class BrowserTab {
   bool disposed = false;
 
   void revokeSigningDocument() {
+    final nstackDocument = nstackDocumentId;
+    if (nstackDocument != null) onRevokeNStackDocument?.call(nstackDocument);
+    nstackDocumentId = null;
     graspBridge?.close();
     graspBridge = null;
     revokeDiagnostics();

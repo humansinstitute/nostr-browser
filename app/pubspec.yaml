@@ -18,6 +18,7 @@ dependencies:
   http: ^1.6.0
   image_picker: ^1.2.3
   path_provider: ^2.1.6
+  pointycastle: ^4.0.0
   shared_preferences: ^2.5.5
   web_socket_channel: ^3.0.3
   webview_flutter: ^4.8.0

@@ -10,6 +10,12 @@ Authentication and protocol verification stay above the transport. See
 [`fips-browser-transport.md`](fips-browser-transport.md) for the normative
 contract, compatibility window and platform status.
 
+`window.NStack` v1 is the separate origin-consented discovery and connection
+metadata surface. It does not carry network traffic or signatures. Its exact
+contract, document-scoped handles, encrypted settings backup, and NIP-78
+recovery hint are documented in
+[`nstack-browser-contract.md`](nstack-browser-contract.md).
+
 Native transport and authentication consent are distinct, versioned capability
 classes scoped to the verified browser origin, device identity, exact service
 peer/endpoint/port, and handle purpose. Authentication policy additionally

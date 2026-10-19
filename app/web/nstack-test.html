@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>window.NStack v1 fixture</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { max-width: 780px; margin: 0 auto; padding: 24px; }
+    button { margin: 4px; padding: 9px 12px; }
+    pre { min-height: 180px; padding: 14px; border: 1px solid #8886; border-radius: 8px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>window.NStack v1 fixture</h1>
+  <p>This page never performs network requests. It exercises browser-held discovery and capability metadata only.</p>
+  <div>
+    <button id="detect">Feature detection</button>
+    <button id="discover">Request discovery</button>
+    <button id="stacks">List NStacks</button>
+    <button id="workspaces">List first workspaces</button>
+    <button id="capabilities">Request first capability</button>
+    <button id="revoke">Revoke handle</button>
+    <button id="clear">Clear output</button>
+  </div>
+  <pre id="output" role="status" aria-live="polite"></pre>
+  <script>
+    const output = document.getElementById('output');
+    let stacks = [];
+    let workspaces = [];
+    let handle = null;
+    function write(label, value) {
+      output.textContent += `${label}\n${JSON.stringify(value, null, 2)}\n\n`;
+    }
+    async function run(label, operation) {
+      try { write(label, await operation()); }
+      catch (error) { write(`${label} error`, { code: error.code || 'unknown', message: error.message }); }
+    }
+    document.getElementById('detect').onclick = () => run('feature', async () => ({
+      exists: typeof window.NStack === 'object',
+      version: window.NStack?.version ?? null,
+      status: await window.NStack?.isAvailable?.(),
+    }));
+    document.getElementById('discover').onclick = () => run('discovery', () => window.NStack.requestDiscovery({ workspaces: true }));
+    document.getElementById('stacks').onclick = () => run('stacks', async () => (stacks = await window.NStack.listNStacks()));
+    document.getElementById('workspaces').onclick = () => run('workspaces', async () => {
+      if (!stacks.length) stacks = await window.NStack.listNStacks();
+      return workspaces = await window.NStack.listWorkspaces({ stackId: stacks[0].id });
+    });
+    document.getElementById('capabilities').onclick = () => run('capability', async () => {
+      if (!stacks.length) stacks = await window.NStack.listNStacks();
+      if (!workspaces.length) workspaces = await window.NStack.listWorkspaces({ stackId: stacks[0].id });
+      const result = await window.NStack.requestCapabilities({
+        stackId: stacks[0].id,
+        workspaceId: workspaces[0]?.id,
+        capabilities: ['workspace.read', 'storage.read'],
+        duration: 900,
+      });
+      handle = result.handle;
+      return result;
+    });
+    document.getElementById('revoke').onclick = () => run('revoke', async () => {
+      if (!handle) throw Object.assign(new Error('Request a capability first.'), { code: 'invalid_request' });
+      const result = await window.NStack.revoke({ handle });
+      handle = null;
+      return result;
+    });
+    document.getElementById('clear').onclick = () => output.textContent = '';
+    window.NStack?.on?.('change', detail => write('change', detail));
+  </script>
+</body>
+</html>

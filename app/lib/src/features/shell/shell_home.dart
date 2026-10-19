@@ -10,6 +10,10 @@ import '../browser/nostr_profile_relay_client.dart';
 import '../browser/signer_store.dart';
 import '../drive/drive_screen.dart';
 import '../onboarding/signer_onboarding_screen.dart';
+import '../nstack/nstack_access.dart';
+import '../nstack/nstack_recovery.dart';
+import '../nstack/nstack_screen.dart';
+import '../nstack/nstack_store.dart';
 import '../setup/setup_screen.dart';
 import '../signer/signer_screen.dart';
 import '../status/status_screen.dart';
@@ -64,6 +68,18 @@ class _ShellHomeState extends State<ShellHome> {
   final MacOSMenuBridge _macOSMenuBridge = MacOSMenuBridge();
   late final FipsRuntimeService _fipsRuntime =
       widget.fipsRuntime ?? FipsRuntimeService();
+  late final NStackRegistryStore _nstackRegistryStore = NStackRegistryStore();
+  late final NStackGrantStore _nstackGrantStore = NStackGrantStore();
+  late final NStackAccessService _nstackAccessService = NStackAccessService(
+    registryStore: _nstackRegistryStore,
+    grantStore: _nstackGrantStore,
+  );
+  late final NStackRecoveryService _nstackRecoveryService =
+      NStackRecoveryService(
+    registryStore: _nstackRegistryStore,
+    storage: TowerNStackStorageClient(),
+    relay: WebSocketNStackRecoveryRelay(),
+  );
   bool _fipsDiagnosticsExportBusy = false;
   String? _observedFlightDeckVersion;
   String? _lastFipsFailure;
@@ -102,6 +118,20 @@ class _ShellHomeState extends State<ShellHome> {
         index: _surfaceIndex(_selectedSurface),
         children: [
           _browserScreen(),
+          _surfaceScaffold(
+            title: 'NStacks',
+            child: NStackScreen(
+              config: widget.config,
+              registryStore: _nstackRegistryStore,
+              grantStore: _nstackGrantStore,
+              accessService: _nstackAccessService,
+              recoveryService: _nstackRecoveryService,
+              onRegistryChanged: () {
+                _nstackAccessService.revokeIdentity(widget.config.deviceNpub);
+                _browserKey.currentState?.reloadNStackSettings();
+              },
+            ),
+          ),
           _surfaceScaffold(
             title: 'Drive',
             child: DriveScreen(
@@ -206,6 +236,11 @@ class _ShellHomeState extends State<ShellHome> {
                 label: Text('Browser'),
               ),
               const NavigationDrawerDestination(
+                icon: Icon(Icons.dns_outlined),
+                selectedIcon: Icon(Icons.dns),
+                label: Text('NStacks'),
+              ),
+              const NavigationDrawerDestination(
                 icon: Icon(Icons.folder_outlined),
                 selectedIcon: Icon(Icons.folder),
                 label: Text('Drive'),
@@ -289,6 +324,8 @@ class _ShellHomeState extends State<ShellHome> {
       fipsRuntime: _fipsRuntime,
       profileRelayClient: widget.profileRelayClient,
       signerVault: widget.signerVault,
+      nstackRegistryStore: _nstackRegistryStore,
+      nstackAccessService: _nstackAccessService,
       onOpenIdentity: widget.signerVault == null ? null : _openIdentity,
       onLogOut: widget.onLogOut == null ? null : _confirmLogOut,
     );
@@ -371,25 +408,28 @@ class _ShellHomeState extends State<ShellHome> {
   int _surfaceIndex(ShellSurface surface) {
     return switch (surface) {
       ShellSurface.browser => 0,
-      ShellSurface.drive => 1,
-      ShellSurface.signer => 2,
-      ShellSurface.status => 3,
-      ShellSurface.setup => 4,
+      ShellSurface.nstacks => 1,
+      ShellSurface.drive => 2,
+      ShellSurface.signer => 3,
+      ShellSurface.status => 4,
+      ShellSurface.setup => 5,
     };
   }
 
   int? _drawerIndexForSurface(ShellSurface surface) => switch (surface) {
         ShellSurface.browser => 0,
-        ShellSurface.drive => 1,
-        ShellSurface.signer => 2,
-        ShellSurface.status => 3,
+        ShellSurface.nstacks => 1,
+        ShellSurface.drive => 2,
+        ShellSurface.signer => 3,
+        ShellSurface.status => 4,
         ShellSurface.setup => null,
       };
   ShellSurface? _surfaceForDrawerIndex(int index) => switch (index) {
         0 => ShellSurface.browser,
-        1 => ShellSurface.drive,
-        2 => ShellSurface.signer,
-        3 => ShellSurface.status,
+        1 => ShellSurface.nstacks,
+        2 => ShellSurface.drive,
+        3 => ShellSurface.signer,
+        4 => ShellSurface.status,
         _ => null,
       };
 
@@ -479,6 +519,7 @@ class _ShellHomeState extends State<ShellHome> {
 
 enum ShellSurface {
   browser,
+  nstacks,
   drive,
   signer,
   status,

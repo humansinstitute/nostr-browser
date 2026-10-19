@@ -162,6 +162,20 @@ with Flight Deck and Publisher Autopilot bookmarks:
 On first launch, the app asks for the `nsec` to sign with and a local PIN, then
 creates the local signer vault described above.
 
+The NStacks screen manages multiple named NStacks, their workspaces, the active
+per-stack browser links/preferences, and one host for encrypted settings backup.
+Eligible top-level pages receive the origin-consented `window.NStack` v1
+discovery surface; discovery and document-scoped service capability approval
+are separate. A reusable manual fixture is available at `/nstack-test.html`.
+The exact API, error and revocation semantics are in
+[`docs/nstack-browser-contract.md`](docs/nstack-browser-contract.md).
+
+Settings backup uses a pure-Dart NIP-44 v2 implementation shared by desktop and
+mobile builds. It uploads only ciphertext to the selected host NStack and
+publishes a signed, self-encrypted NIP-78 recovery pointer. This does not change
+the older `window.nostr.nip44` bridge note above: general website-requested
+NIP-44 operations still follow their existing platform path.
+
 Do not put signer nsecs in `.env.local` anymore. That file is only for local
 development overrides such as `WMAPP_CORE_BIN`:
 

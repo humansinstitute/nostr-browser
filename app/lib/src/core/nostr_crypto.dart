@@ -75,6 +75,37 @@ class NostrCrypto {
     };
   }
 
+  static bool verifyEvent(Map<String, dynamic> event) {
+    try {
+      final id = event['id']?.toString().toLowerCase() ?? '';
+      final publicKey = event['pubkey']?.toString().toLowerCase() ?? '';
+      final signature = event['sig']?.toString().toLowerCase() ?? '';
+      final createdAt = _integer(event['created_at']);
+      final kind = _integer(event['kind']);
+      if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(id) ||
+          !RegExp(r'^[0-9a-f]{64}$').hasMatch(publicKey) ||
+          !RegExp(r'^[0-9a-f]{128}$').hasMatch(signature) ||
+          createdAt == null ||
+          kind == null) {
+        return false;
+      }
+      final tags = _normalizeTags(event['tags']);
+      final expected = _sha256Hex(utf8.encode(jsonEncode([
+        0,
+        publicKey,
+        createdAt,
+        kind,
+        tags,
+        event['content']?.toString() ?? '',
+      ])));
+      return expected == id && bip340.verify(publicKey, id, signature);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static String sha256Hex(List<int> bytes) => _sha256Hex(bytes);
+
   static SignedNip98 signNip98({
     required String secret,
     required String method,
