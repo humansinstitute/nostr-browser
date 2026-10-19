@@ -38,29 +38,18 @@ class NStackDiscoveryClient {
           'invalid_origin', 'The configured NStack origin is invalid.');
     }
     final origin = Uri.parse(configured).replace(path: '');
-    final request =
-        http.Request('GET', origin.replace(path: nstackDescriptorPath))
-          ..followRedirects = false
-          ..headers['Accept'] = 'application/json';
+    final abortTrigger = Completer<void>();
+    final request = http.AbortableRequest(
+        'GET', origin.replace(path: nstackDescriptorPath),
+        abortTrigger: abortTrigger.future)
+      ..followRedirects = false
+      ..headers['Accept'] = 'application/json';
     try {
-      final response = await _client.send(request).timeout(timeout);
-      if (response.statusCode != 200) {
-        throw NStackDiscoveryException('http_error',
-            'Descriptor request returned HTTP ${response.statusCode}.');
-      }
-      final length = response.contentLength;
-      if (length != null && length > nstackDescriptorMaxBytes) {
-        throw const NStackDiscoveryException(
-            'oversized', 'Descriptor exceeds the 128 KiB limit.');
-      }
-      final bytes = <int>[];
-      await for (final chunk in response.stream.timeout(timeout)) {
-        bytes.addAll(chunk);
-        if (bytes.length > nstackDescriptorMaxBytes) {
-          throw const NStackDiscoveryException(
-              'oversized', 'Descriptor exceeds the 128 KiB limit.');
-        }
-      }
+      final bytes =
+          await _readResponse(request).timeout(timeout, onTimeout: () {
+        abortTrigger.complete();
+        throw TimeoutException('Descriptor request timed out.');
+      });
       Object? decoded;
       try {
         decoded = jsonDecode(utf8.decode(bytes));
@@ -82,6 +71,28 @@ class NStackDiscoveryClient {
       throw const NStackDiscoveryException(
           'network_error', 'Descriptor request failed.');
     }
+  }
+
+  Future<List<int>> _readResponse(http.BaseRequest request) async {
+    final response = await _client.send(request);
+    if (response.statusCode != 200) {
+      throw NStackDiscoveryException('http_error',
+          'Descriptor request returned HTTP ${response.statusCode}.');
+    }
+    final length = response.contentLength;
+    if (length != null && length > nstackDescriptorMaxBytes) {
+      throw const NStackDiscoveryException(
+          'oversized', 'Descriptor exceeds the 128 KiB limit.');
+    }
+    final bytes = <int>[];
+    await for (final chunk in response.stream) {
+      bytes.addAll(chunk);
+      if (bytes.length > nstackDescriptorMaxBytes) {
+        throw const NStackDiscoveryException(
+            'oversized', 'Descriptor exceeds the 128 KiB limit.');
+      }
+    }
+    return bytes;
   }
 }
 

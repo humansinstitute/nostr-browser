@@ -129,6 +129,51 @@ void main() {
     );
   });
 
+  testWidgets('times out a slow-drip body at the total fetch deadline',
+      (tester) async {
+    final body = utf8.encode(jsonEncode(_descriptor()));
+    final chunks = List<List<int>>.generate(10, (index) {
+      final start = body.length * index ~/ 10;
+      final end = body.length * (index + 1) ~/ 10;
+      return body.sublist(start, end);
+    });
+    var emittedChunks = 0;
+    final client = MockClient.streaming((request, _) async {
+      final controller = StreamController<List<int>>();
+      late final Timer timer;
+      timer = Timer.periodic(const Duration(milliseconds: 2), (_) {
+        if (emittedChunks < chunks.length) {
+          controller.add(chunks[emittedChunks]);
+          emittedChunks += 1;
+        } else {
+          timer.cancel();
+          controller.close();
+        }
+      });
+      (request as http.AbortableRequest).abortTrigger!.then((_) {
+        timer.cancel();
+        controller.close();
+      });
+      return http.StreamedResponse(controller.stream, 200);
+    });
+    final fetch = NStackDiscoveryClient(
+      client: client,
+      clock: () => now,
+      timeout: const Duration(milliseconds: 5),
+    ).fetch('https://tower.example');
+    final expectation = expectLater(
+      fetch,
+      throwsA(isA<NStackDiscoveryException>()
+          .having((error) => error.code, 'code', 'timeout')),
+    );
+
+    await tester.pump(const Duration(milliseconds: 5));
+
+    await expectation;
+    expect(emittedChunks, greaterThan(0));
+    expect(emittedChunks, lessThan(chunks.length));
+  });
+
   test('refresh preserves last-known-good and first failure invents nothing',
       () async {
     const identity = 'identity';
