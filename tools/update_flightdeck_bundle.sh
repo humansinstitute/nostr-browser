@@ -2,8 +2,13 @@
 set -euo pipefail
 
 REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+# shellcheck source=tools/load_local_env.sh
+source "$REPO_DIR/tools/load_local_env.sh"
+load_local_env "$REPO_DIR/.env.local"
+
 FLIGHT_DECK_DIR="${FLIGHT_DECK_DIR:-}"
 FLIGHT_DECK_REPOSITORY="https://github.com/OtherStuffAI/wm-flightdeck.git"
+DEFAULT_FLIGHT_DECK_PG_APP_NPUB="npub1hd37reqgfcnz3pvzj4grknd2nkzc94p9ercmunrxx22razr2rfxsw6dns5"
 TEMP_BUILD_DIR=""
 
 cleanup() {
@@ -35,6 +40,13 @@ if [[ "$USE_EXISTING_DIST" == true && -z "$FLIGHT_DECK_DIR" ]]; then
 fi
 
 if [[ "$USE_EXISTING_DIST" == false ]]; then
+  FLIGHT_DECK_PG_APP_NPUB="${FLIGHT_DECK_PG_APP_NPUB:-$DEFAULT_FLIGHT_DECK_PG_APP_NPUB}"
+  if [[ ! "$FLIGHT_DECK_PG_APP_NPUB" =~ ^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$ ]]; then
+    echo 'FLIGHT_DECK_PG_APP_NPUB must be a valid npub.' >&2
+    exit 2
+  fi
+  export FLIGHT_DECK_PG_APP_NPUB
+
   for tool in git bun node rsync; do
     command -v "$tool" >/dev/null 2>&1 || {
       printf '%s is required to build and bundle Flight Deck.\n' "$tool" >&2
@@ -61,8 +73,6 @@ if [[ "$USE_EXISTING_DIST" == false ]]; then
       export npm_config_cache="$TEMP_BUILD_DIR/npm-cache"
       mkdir -p "$TEMP_BUILD_DIR/tmp"
       export TMPDIR="$TEMP_BUILD_DIR/tmp"
-      : "${FLIGHT_DECK_PG_APP_NPUB:?Set the verified Flight Deck app identity}"
-      export FLIGHT_DECK_PG_APP_NPUB
       # Source commits can include the next release notes before a build updates
       # .build-meta.json. Use the newer recorded number without inventing a release.
       FLIGHTDECK_BUILD_NUMBER="$(node -e '

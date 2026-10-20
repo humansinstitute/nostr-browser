@@ -30,6 +30,7 @@ mkdir -p "$fixture/repo/tools/ios"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$fixture/repo/tools/ios/build_core.sh"
 chmod +x "$fixture/repo/tools/ios/build_core.sh"
 cp "$SCRIPT" "$fixture/repo/tools/"
+cp "$REPO_DIR/tools/load_local_env.sh" "$fixture/repo/tools/"
 cp "$REPO_DIR/tools/ios/configure_apple_signing.py" "$REPO_DIR/tools/ios/testflight_release.py" "$fixture/repo/tools/ios/"
 mkdir -p "$fixture/repo/docs/deploy"
 cp "$REPO_DIR/docs/deploy/"*ExportOptions.plist "$fixture/repo/docs/deploy/"
@@ -53,6 +54,7 @@ if [[ "$*" == 'run verify:dist' ]]; then
   exit 0
 fi
 [[ "$*" == 'run build' ]]
+[[ "$FLIGHT_DECK_PG_APP_NPUB" == "${EXPECTED_APP_NPUB:?}" ]]
 if [[ -z "${FLIGHT_DECK_DIR:-}" ]]; then
   [[ "$FLIGHTDECK_BUILD_NUMBER" == "${EXPECTED_BUILD_NUMBER:-1888}" ]]
   [[ -n "$FLIGHT_DECK_PG_APP_NPUB" ]]
@@ -96,6 +98,7 @@ chmod +x "$fixture/bin/"*
 export PATH="$fixture/bin:$PATH"
 export FLIGHT_DECK_DIR="$fixture/source"
 export BUILD_TEST_LOG="$fixture/events"
+export EXPECTED_APP_NPUB="npub1hd37reqgfcnz3pvzj4grknd2nkzc94p9ercmunrxx22razr2rfxsw6dns5"
 export WMAPP_ANDROID_KEYSTORE="$fixture/test-keystore"
 export WMAPP_ANDROID_STORE_PASSWORD=test-only
 export WMAPP_ANDROID_KEY_PASSWORD=test-only
@@ -135,12 +138,46 @@ rg -q '^flutter build ios --simulator --debug$' "$BUILD_TEST_LOG"
 
 printf 'All seven platform helpers refresh Flight Deck and stop on build failure; simulator and manual reuse passed\n'
 
+# Repository-local overrides load before the embedded build. An explicit process
+# environment wins over the same names in .env.local.
+alternate_npub="npub1vf3h0rmlrr0x6pjc68jcrk5p2zsfzl3f9zwcppcdn8386npdlxgqmam99v"
+cat > "$fixture/repo/.env.local" <<EOF
+export FLIGHT_DECK_DIR="$fixture/source"
+export FLIGHT_DECK_PG_APP_NPUB="$alternate_npub"
+EOF
+unset FLIGHT_DECK_DIR FLIGHT_DECK_PG_APP_NPUB
+export EXPECTED_APP_NPUB="$alternate_npub"
+: > "$BUILD_TEST_LOG"
+"$fixture/repo/tools/update_flightdeck_bundle.sh"
+[[ "$(cat "$BUILD_TEST_LOG")" == 'flightdeck' ]]
+
+cat > "$fixture/repo/.env.local" <<EOF
+export FLIGHT_DECK_DIR="/local-env-must-not-win"
+export FLIGHT_DECK_PG_APP_NPUB="$alternate_npub"
+EOF
+export EXPECTED_APP_NPUB="npub1hd37reqgfcnz3pvzj4grknd2nkzc94p9ercmunrxx22razr2rfxsw6dns5"
+: > "$BUILD_TEST_LOG"
+FLIGHT_DECK_DIR="$fixture/source" \
+  FLIGHT_DECK_PG_APP_NPUB="$EXPECTED_APP_NPUB" \
+  "$fixture/repo/tools/update_flightdeck_bundle.sh"
+[[ "$(cat "$BUILD_TEST_LOG")" == 'flightdeck' ]]
+rm "$fixture/repo/.env.local"
+printf '.env.local loading and explicit process-environment precedence passed\n'
+
+# Explicit malformed overrides fail closed before source build or download.
+: > "$BUILD_TEST_LOG"
+status=0
+FLIGHT_DECK_DIR="$fixture/source" FLIGHT_DECK_PG_APP_NPUB=not-an-npub \
+  "$fixture/repo/tools/update_flightdeck_bundle.sh" > "$fixture/output" 2>&1 || status=$?
+[[ "$status" == 2 && ! -s "$BUILD_TEST_LOG" ]]
+rg -q 'must be a valid npub' "$fixture/output"
+printf 'Malformed Flight Deck app npub fails closed\n'
+
 # Default GitHub path: cleanup and preserve old assets on every failure stage.
 export TEST_SOURCE="$fixture/source"
-export FLIGHT_DECK_PG_APP_NPUB="npub1testfixture"
 export EXPECTED_TEMP_ROOT="$fixture/downloads"
 mkdir -p "$EXPECTED_TEMP_ROOT"
-unset FLIGHT_DECK_DIR
+unset FLIGHT_DECK_DIR FLIGHT_DECK_PG_APP_NPUB
 for failure in none FAIL_CLONE FAIL_INSTALL FAIL_FLIGHTDECK FAIL_VERIFY; do
   : > "$BUILD_TEST_LOG"
   printf 'preserve\n' > "$fixture/repo/app/assets/flightdeck/sentinel"

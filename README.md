@@ -192,9 +192,13 @@ Then launch through the root helper scripts:
 ./runapp.sh        # launch the existing macOS build
 ```
 
-`runapp.sh` sources `.env.local` and passes `WMAPP_REPO_DIR` to the app. The
-signer identity still comes from the encrypted onboarding vault, not from shell
-environment variables.
+The build helpers load `.env.local` before preparing the embedded Flight Deck,
+and `runapp.sh` loads it before launch. Values explicitly exported by the calling
+process take precedence over the file. The canonical public Flight Deck PG app
+npub is built in, so `.env.local` is not required for a normal build; set
+`FLIGHT_DECK_PG_APP_NPUB` only to build an intentional alternate namespace.
+`runapp.sh` also passes `WMAPP_REPO_DIR` to the app. The signer identity still
+comes from the encrypted onboarding vault, not from shell environment variables.
 
 The current macOS development build disables the app sandbox because the Flutter shell still invokes the Rust core through `cargo run`. Production packaging should bundle and execute a signed `wmapp-core` binary from inside the app instead.
 
@@ -276,4 +280,8 @@ See:
 - [API Gap Harness](docs/api_gap_harness.md)
 - [WApp Signer Trust Contract](docs/wapp_signer_contract.md)
 
-Builds that fetch Flight Deck require `FLIGHT_DECK_PG_APP_NPUB` set to the verified deployment app identity. Configure release publisher and App Store settings locally as described in the deployment guides; public configuration contains no personal publisher identity.
+Builds that fetch Flight Deck use NBrowser's canonical public Flight Deck PG app
+npub by default. `FLIGHT_DECK_PG_APP_NPUB` remains an explicit override for an
+intentional alternate deployment and must be a valid npub. Configure release
+publisher and App Store settings locally as described in the deployment guides;
+public configuration contains no personal publisher identity.

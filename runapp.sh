@@ -8,6 +8,8 @@ APP_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/wingman_app"
 LOG_FILE="${TMPDIR:-/tmp}/wingman_app.log"
 ENV_FILE="$REPO_DIR/.env.local"
 GIT_REV="$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+# shellcheck source=tools/load_local_env.sh
+source "$REPO_DIR/tools/load_local_env.sh"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "runapp.sh currently launches the macOS Flutter build only." >&2
@@ -40,12 +42,7 @@ stop_existing_app() {
   pkill -9 -x wingman_app 2>/dev/null || true
 }
 
-if [[ -f "$ENV_FILE" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
-fi
+load_local_env "$ENV_FILE"
 
 stop_existing_app
 
