@@ -447,6 +447,25 @@ class WebKitWebViewController extends PlatformWebViewController {
     ]);
   }
 
+  /// Installs a main-frame script before page-authored JavaScript executes.
+  ///
+  /// WMapp uses this for capability-presence bootstraps whose authority is
+  /// still checked by Dart for every request. Call before the first load.
+  Future<void> addMainFrameJavaScriptAtDocumentStart(String source) async {
+    if (source.isEmpty) {
+      throw ArgumentError.value(source, 'source', 'must not be empty');
+    }
+    final WKUserContentController contentController = await _webView.configuration
+        .getUserContentController();
+    await contentController.addUserScript(
+      WKUserScript(
+        source: source,
+        injectionTime: UserScriptInjectionTime.atDocumentStart,
+        isForMainFrameOnly: true,
+      ),
+    );
+  }
+
   @override
   Future<void> removeJavaScriptChannel(String javaScriptChannelName) async {
     assert(javaScriptChannelName.isNotEmpty);

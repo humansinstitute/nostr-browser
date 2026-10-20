@@ -212,6 +212,35 @@ void main() {
     expect(empty.catalogueStatus?.catalogue, isNull);
   });
 
+  test('catalogue binds to the verified origin while retaining a base path',
+      () async {
+    const identity = 'identity';
+    final store = NStackRegistryStore();
+    await store.addOrUpdate(
+      identity,
+      const NStackEntry(
+        id: 'base-path',
+        name: 'Tower proxy',
+        url: 'https://tower.example/base',
+      ),
+    );
+    final discovery = NStackDiscoveryService(
+      registryStore: store,
+      client: NStackDiscoveryClient(
+        client: MockClient(
+            (_) async => http.Response(jsonEncode(_descriptor()), 200)),
+        clock: () => now,
+      ),
+      clock: () => now,
+    );
+
+    final refreshed = await discovery.refresh(identity, 'base-path');
+
+    expect(refreshed.url, 'https://tower.example/base');
+    expect(refreshed.catalogueStatus?.catalogue?.service('tower')?.endpoint,
+        'https://tower.example');
+  });
+
   test('v1 registry migrates to v2 while retaining legacy bytes', () async {
     const identity = 'identity';
     final preferences = SharedPreferencesAsync();

@@ -1,3 +1,4 @@
+import '../../theme/browser_palette.dart';
 import 'browser_bookmark_store.dart';
 
 String _escape(String value) => value
@@ -47,6 +48,22 @@ button {font:inherit} .app-open {border:0;background:transparent;color:inherit;d
 .star {position:absolute;top:-12px;left:-12px;width:44px;height:44px;border-radius:50%;border:1px solid #ffffff88;background:#19382fcc;color:#ffe29a;font-size:26px}.star[aria-pressed="true"] {color:#ffd45b}
 #settings-panel {margin-bottom:24px;padding:16px;border-radius:16px;background:#ffffffeb;display:flex;align-items:center;gap:12px;flex-wrap:wrap} #settings-panel[hidden] {display:none} #settings-panel button {background:#fff;border:1px solid #abc2b7;border-radius:20px;padding:8px 16px;cursor:pointer}
 @media(max-width:420px) {main {padding:76px 16px}.grid {grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.app-open {min-height:160px}.icon {width:100px;height:100px}}
+${'''
+/* Shared brand tokens; the landscape and custom app imagery remain intact. */
+:root {${BrowserPalette.cssVariables};color:var(--ink);background:var(--frame)}
+body {background-color:var(--frame);background-image:linear-gradient(145deg,#291c3d,#513568 55%,#7040aa);${background == null ? '' : 'background-image:linear-gradient(#291c3d33,#291c3d33),url("${_escape(background)}");'}}
+.settings {background:var(--frame);color:var(--lavender);border-color:var(--outline);border-radius:8px;box-shadow:3px 3px 0 #291c3d66}
+.fallback {background:var(--active);color:var(--lavender);border:1px solid var(--outline);border-radius:8px;box-shadow:4px 4px 0 #291c3d99}
+.app-open {border-radius:8px}
+.app-open:hover {background:#291c3d55}.app-open:hover .fallback {background:var(--purple)}
+button:focus-visible,input:focus-visible {outline:3px solid var(--orange);outline-offset:3px}
+.edit {background:var(--paper);color:var(--ink);border-color:var(--outline);border-radius:6px}
+.star {background:var(--frame);color:var(--lavender);border-color:var(--outline)}.star[aria-pressed="true"] {color:var(--orange)}
+#settings-panel {background:var(--paper);border:1px solid var(--outline);border-radius:8px;box-shadow:4px 4px 0 #291c3d66}
+#settings-panel button {background:var(--paper);color:var(--ink);border-color:var(--outline);border-radius:6px}
+#settings-panel button:hover,.edit:hover {background:#ebddf8}
+main>p {background:var(--paper);color:var(--ink);padding:16px;border-radius:8px}
+'''}
 </style></head><body><main>
 <button class="settings" aria-label="Edit apps and background" aria-expanded="false" aria-controls="settings-panel">⚙</button>
 <div id="settings-panel" hidden><span>Edit your saved apps</span><button data-action="chooseBackground">Choose background</button><button data-action="resetBackground">Default background</button><label>Label colour <input id="label-colour" type="color" value="${safeLabelColour(labelColour)}"></label></div>

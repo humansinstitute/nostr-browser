@@ -4,6 +4,7 @@ import android.webkit.WebView
 import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import androidx.webkit.ScriptHandler
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
@@ -24,6 +25,7 @@ class GraspChannelCoordinator(
         }
     }
     private val installed = mutableMapOf<Long, WebView>()
+    private val documentStartScripts = mutableMapOf<Long, ScriptHandler>()
     private var destroyed = false
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -43,13 +45,13 @@ class GraspChannelCoordinator(
                     result.success(null)
                 }
             }
-            "install" -> result.success(install(id))
+            "install" -> result.success(install(id, call.argument<String>("documentStartScript")))
             "remove" -> { remove(id); result.success(null) }
             else -> result.notImplemented()
         }
     }
 
-    private fun install(id: Long): Boolean {
+    private fun install(id: Long, documentStartScript: String?): Boolean {
         if (destroyed || !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return false
         val view = lookup(id) ?: return false
         if (installed[id] === view) return true
@@ -68,6 +70,14 @@ class GraspChannelCoordinator(
                     channel.invokeMethod("message", mapOf("webViewIdentifier" to id, "channel" to name, "message" to body))
                 }
             }
+            if (!documentStartScript.isNullOrEmpty() &&
+                WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                documentStartScripts[id] = WebViewCompat.addDocumentStartJavaScript(
+                    view,
+                    documentStartScript,
+                    setOf("*"),
+                )
+            }
             return true
         } catch (_: RuntimeException) {
             remove(id)
@@ -76,6 +86,7 @@ class GraspChannelCoordinator(
     }
 
     private fun remove(id: Long) {
+        try { documentStartScripts.remove(id)?.remove() } catch (_: RuntimeException) { }
         val view = installed.remove(id) ?: return
         for (name in GraspMessagePolicy.channels) {
             try { WebViewCompat.removeWebMessageListener(view, name) } catch (_: RuntimeException) { }

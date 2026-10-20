@@ -1,3 +1,5 @@
+import 'pin_input_test_helpers.dart';
+import 'package:wingman_app/src/widgets/immediate_pin_field.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,12 +24,12 @@ void main() {
         isNull);
     await tester.tap(find.byType(CheckboxListTile));
     await tester.pump();
-    await tester.enterText(find.byType(TextField), '9999');
+    await enterEditorText(tester, find.byType(ImmediatePinField), '9999');
     await tester.tap(find.text('Reveal nsec'));
     await tester.pumpAndSettle();
     expect(find.text('nsec-test-only'), findsNothing);
     expect(find.textContaining('Unable to export.'), findsOneWidget);
-    await tester.enterText(find.byType(TextField), '1234');
+    await enterEditorText(tester, find.byType(ImmediatePinField), '1234');
     await tester.tap(find.text('Reveal nsec'));
     await tester.pumpAndSettle();
     expect(calls, 2);
@@ -43,7 +45,7 @@ void main() {
             body: ProfileKeyExportDialog(unlock: (_) => pending.future))));
     await tester.tap(find.byType(CheckboxListTile));
     await tester.pump();
-    await tester.enterText(find.byType(TextField), '1234');
+    await enterEditorText(tester, find.byType(ImmediatePinField), '1234');
     await tester.tap(find.text('Reveal nsec'));
     await tester.pump();
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);

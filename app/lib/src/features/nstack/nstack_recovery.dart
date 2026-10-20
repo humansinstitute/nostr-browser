@@ -63,10 +63,12 @@ class NStackRecoveryPointer {
     required this.updatedAt,
     required this.relays,
     this.workspaceId,
+    this.workspaceOwnerNpub,
   });
 
   final String hostUrl;
   final String? workspaceId;
+  final String? workspaceOwnerNpub;
   final String objectId;
   final String sha256;
   final int snapshotRevision;
@@ -78,6 +80,8 @@ class NStackRecoveryPointer {
         'version': 1,
         'host_url': hostUrl,
         if (workspaceId != null) 'workspace_id': workspaceId,
+        if (workspaceOwnerNpub != null)
+          'workspace_owner_npub': workspaceOwnerNpub,
         'object_id': objectId,
         'sha256': sha256,
         'snapshot_schema_version': 1,
@@ -117,10 +121,15 @@ class NStackRecoveryPointer {
       throw const FormatException('invalid recovery pointer');
     }
     final workspaceId = value['workspace_id']?.toString().trim();
+    final workspaceOwnerNpub = value['workspace_owner_npub']?.toString().trim();
     return NStackRecoveryPointer(
       hostUrl: hostUrl,
       workspaceId:
           workspaceId == null || workspaceId.isEmpty ? null : workspaceId,
+      workspaceOwnerNpub:
+          workspaceOwnerNpub == null || workspaceOwnerNpub.isEmpty
+              ? null
+              : workspaceOwnerNpub,
       objectId: objectId,
       sha256: hash,
       snapshotRevision: revision,
@@ -130,20 +139,66 @@ class NStackRecoveryPointer {
   }
 }
 
+class NStackBackupTarget {
+  const NStackBackupTarget({
+    required this.hostUrl,
+    required this.workspaceId,
+    required this.workspaceOwnerNpub,
+    required this.identityNpub,
+    required this.canManageNamespace,
+  });
+
+  final String hostUrl;
+  final String workspaceId;
+  final String workspaceOwnerNpub;
+  final String identityNpub;
+  final bool canManageNamespace;
+}
+
+enum NStackBackupNamespaceState { enabled, managerRequired }
+
+class NStackStorageException implements Exception {
+  const NStackStorageException(this.code, this.message, {this.statusCode});
+
+  final String code;
+  final String message;
+  final int? statusCode;
+
+  @override
+  String toString() => message;
+}
+
 abstract class NStackStorageClient {
-  Future<String> upload({
-    required String hostUrl,
-    required String ownerNpub,
+  Future<NStackBackupNamespaceState> namespaceState({
+    required NStackBackupTarget target,
+    required String secret,
+  });
+
+  Future<void> enableNamespace({
+    required NStackBackupTarget target,
+    required String secret,
+  });
+
+  Future<NStackRecoveryPointer> upload({
+    required NStackBackupTarget target,
     required String secret,
     required List<int> bytes,
     required String sha256,
+    required int snapshotRevision,
+    required DateTime updatedAt,
+    required List<String> relays,
   });
 
-  Future<List<int>> fetch({
-    required String hostUrl,
-    required String objectId,
+  Future<NStackRecoveryPointer> readPointer({
+    required NStackBackupTarget target,
     required String secret,
-    required String expectedSha256,
+    required List<String> relays,
+  });
+
+  Future<List<int>> fetchObject({
+    required NStackBackupTarget target,
+    required NStackRecoveryPointer pointer,
+    required String secret,
   });
 }
 
@@ -153,20 +208,93 @@ class TowerNStackStorageClient implements NStackStorageClient {
   final http.Client _client;
 
   @override
-  Future<String> upload({
-    required String hostUrl,
-    required String ownerNpub,
+  Future<NStackBackupNamespaceState> namespaceState({
+    required NStackBackupTarget target,
+    required String secret,
+  }) async {
+    final root = _root(target, secret);
+    try {
+      final response = await _jsonRequest(
+        method: 'GET',
+        url: _rowsUrl(root, target.workspaceId),
+        secret: secret,
+      );
+      _validateWorkspaceBinding(response, target);
+      return NStackBackupNamespaceState.enabled;
+    } on NStackStorageException catch (error) {
+      if (error.statusCode == 404 && error.code == 'app_not_found') {
+        return NStackBackupNamespaceState.managerRequired;
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> enableNamespace({
+    required NStackBackupTarget target,
+    required String secret,
+  }) async {
+    if (!target.canManageNamespace) {
+      throw const NStackStorageException(
+        'workspace_manager_required',
+        'A workspace manager must enable NBrowser backup for this workspace.',
+        statusCode: 403,
+      );
+    }
+    final root = _root(target, secret);
+    final url = '$root/api/v4/workspaces/'
+        '${Uri.encodeComponent(target.workspaceOwnerNpub)}/apps';
+    final body = jsonEncode({
+      'app_npub': nbrowserAppNpub,
+      'app_name': 'NBrowser',
+      'enabled': true,
+      'capabilities': ['storage.private', 'app_rows.private_only'],
+    });
+    try {
+      await _jsonRequest(method: 'POST', url: url, secret: secret, body: body);
+    } on NStackStorageException catch (error) {
+      if (error.statusCode == 403) {
+        throw const NStackStorageException(
+          'workspace_manager_required',
+          'A workspace manager must enable NBrowser backup for this workspace.',
+          statusCode: 403,
+        );
+      }
+      rethrow;
+    }
+    if (await namespaceState(target: target, secret: secret) !=
+        NStackBackupNamespaceState.enabled) {
+      throw const NStackStorageException(
+        'app_not_found',
+        'Tower did not enable the NBrowser backup namespace.',
+      );
+    }
+  }
+
+  @override
+  Future<NStackRecoveryPointer> upload({
+    required NStackBackupTarget target,
     required String secret,
     required List<int> bytes,
     required String sha256,
+    required int snapshotRevision,
+    required DateTime updatedAt,
+    required List<String> relays,
   }) async {
-    final root = canonicalNStackUrl(hostUrl);
-    if (root == null) throw StateError('Host NStack HTTPS URL is invalid.');
-    final prepareUrl = '$root/api/v4/storage/prepare';
+    final root = _root(target, secret);
+    if (await namespaceState(target: target, secret: secret) !=
+        NStackBackupNamespaceState.enabled) {
+      throw const NStackStorageException(
+        'app_not_found',
+        'A workspace manager must enable NBrowser backup for this workspace.',
+        statusCode: 404,
+      );
+    }
+    final prepareUrl = '$root/api/v4/flightdeck-pg/workspaces/'
+        '${target.workspaceId}/storage/prepare';
     final prepareBody = jsonEncode({
-      'owner_npub': ownerNpub,
-      'content_type': 'application/vnd.wingman.nbrowser-settings+encrypted',
-      'file_name': 'nbrowser-settings.enc',
+      'content_type': 'application/vnd.wingman.nbrowser-settings+json',
+      'file_name': 'nbrowser-settings.nip44',
       'size_bytes': bytes.length,
       'is_public': false,
       'metadata': {'purpose': 'nbrowser/settings-backup', 'schema_version': 1},
@@ -179,7 +307,12 @@ class TowerNStackStorageClient implements NStackStorageClient {
     );
     final objectId = prepared['object_id']?.toString() ?? '';
     if (!RegExp(r'^[0-9a-fA-F-]{36}$').hasMatch(objectId)) {
-      throw StateError('Tower returned an invalid storage object.');
+      throw const NStackStorageException(
+          'invalid_response', 'Tower returned an invalid storage object.');
+    }
+    if (prepared['owner_npub'] != target.workspaceOwnerNpub) {
+      throw const NStackStorageException('workspace_mismatch',
+          'Tower prepared storage outside the selected workspace.');
     }
     final uploadUrl = '$root/api/v4/storage/$objectId';
     final uploadBody = jsonEncode({'base64_data': base64Encode(bytes)});
@@ -190,39 +323,138 @@ class TowerNStackStorageClient implements NStackStorageClient {
       body: uploadBody,
     );
     final completeUrl = '$root/api/v4/storage/$objectId/complete';
-    final completeBody = jsonEncode({'sha256_hex': sha256});
+    final completeBody =
+        jsonEncode({'sha256_hex': sha256, 'size_bytes': bytes.length});
     await _jsonRequest(
       method: 'POST',
       url: completeUrl,
       secret: secret,
       body: completeBody,
     );
-    return objectId;
+    await _verifyObjectMetadata(
+      root: root,
+      objectId: objectId,
+      secret: secret,
+      expectedSha256: sha256,
+    );
+    final pointerData = {
+      'schema_version': 1,
+      'workspace_id': target.workspaceId,
+      'object_id': objectId,
+      'sha256_hex': sha256,
+      'status': 'complete',
+      'snapshot_revision': snapshotRevision,
+      'updated_at': updatedAt.toUtc().toIso8601String(),
+    };
+    final rowsUrl = _rowsUrl(root, target.workspaceId);
+    final createBody = jsonEncode({
+      'row_id': 'current-v1',
+      'visibility': 'private',
+      'data': pointerData,
+    });
+    Map<String, dynamic> rowResponse;
+    try {
+      rowResponse = await _jsonRequest(
+          method: 'POST', url: rowsUrl, secret: secret, body: createBody);
+    } on NStackStorageException catch (error) {
+      if (error.statusCode != 409 || error.code != 'row_conflict') rethrow;
+      final existing = await _jsonRequest(
+        method: 'GET',
+        url: '$rowsUrl/current-v1',
+        secret: secret,
+      );
+      _validateWorkspaceBinding(existing, target);
+      rowResponse = await _jsonRequest(
+        method: 'PATCH',
+        url: '$rowsUrl/current-v1',
+        secret: secret,
+        body: jsonEncode({'visibility': 'private', 'data': pointerData}),
+      );
+    }
+    _validateWorkspaceBinding(rowResponse, target);
+    _validatePointerRow(rowResponse, target, objectId, sha256);
+    return NStackRecoveryPointer(
+      hostUrl: root,
+      workspaceId: target.workspaceId,
+      workspaceOwnerNpub: target.workspaceOwnerNpub,
+      objectId: objectId,
+      sha256: sha256,
+      snapshotRevision: snapshotRevision,
+      updatedAt: updatedAt.toUtc(),
+      relays: relays,
+    );
   }
 
   @override
-  Future<List<int>> fetch({
-    required String hostUrl,
-    required String objectId,
+  Future<NStackRecoveryPointer> readPointer({
+    required NStackBackupTarget target,
     required String secret,
-    required String expectedSha256,
+    required List<String> relays,
   }) async {
-    final root = canonicalNStackUrl(hostUrl);
-    if (root == null || !RegExp(r'^[0-9a-fA-F-]{36}$').hasMatch(objectId)) {
-      throw StateError('Recovery storage pointer is invalid.');
-    }
-    final metadataUrl = '$root/api/v4/storage/$objectId';
-    final metadata = await _jsonRequest(
+    final root = _root(target, secret);
+    final response = await _jsonRequest(
       method: 'GET',
-      url: metadataUrl,
+      url: '${_rowsUrl(root, target.workspaceId)}/current-v1',
       secret: secret,
     );
-    if (metadata['sha256_hex']?.toString().toLowerCase() != expectedSha256 ||
-        metadata['completed_at'] == null ||
-        metadata['is_public'] == true) {
-      throw StateError('Recovery object metadata or hash does not match.');
+    _validateWorkspaceBinding(response, target);
+    final row = response['row'];
+    final data = row is Map<String, dynamic> ? row['data'] : null;
+    if (row is! Map<String, dynamic> ||
+        row['row_id'] != 'current-v1' ||
+        row['owner_npub'] != target.identityNpub ||
+        row['visibility'] != 'private' ||
+        data is! Map<String, dynamic> ||
+        data['schema_version'] != 1 ||
+        data['workspace_id'] != target.workspaceId ||
+        data['status'] != 'complete') {
+      throw const NStackStorageException(
+          'pointer_mismatch', 'Tower returned an invalid backup pointer.');
     }
-    final contentUrl = '$root/api/v4/storage/$objectId/content';
+    final objectId = data['object_id']?.toString() ?? '';
+    final hash = data['sha256_hex']?.toString().toLowerCase() ?? '';
+    final revision = data['snapshot_revision'];
+    final updatedAt = DateTime.tryParse(data['updated_at']?.toString() ?? '');
+    if (!RegExp(r'^[0-9a-fA-F-]{36}$').hasMatch(objectId) ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(hash) ||
+        revision is! int ||
+        revision < 0 ||
+        updatedAt == null) {
+      throw const NStackStorageException(
+          'pointer_mismatch', 'Tower returned an invalid backup pointer.');
+    }
+    return NStackRecoveryPointer(
+      hostUrl: root,
+      workspaceId: target.workspaceId,
+      workspaceOwnerNpub: target.workspaceOwnerNpub,
+      objectId: objectId,
+      sha256: hash,
+      snapshotRevision: revision,
+      updatedAt: updatedAt.toUtc(),
+      relays: relays,
+    );
+  }
+
+  @override
+  Future<List<int>> fetchObject({
+    required NStackBackupTarget target,
+    required NStackRecoveryPointer pointer,
+    required String secret,
+  }) async {
+    final root = _root(target, secret);
+    if (pointer.hostUrl != root ||
+        pointer.workspaceId != target.workspaceId ||
+        pointer.workspaceOwnerNpub != target.workspaceOwnerNpub) {
+      throw const NStackStorageException('workspace_mismatch',
+          'The backup pointer does not match the selected workspace.');
+    }
+    await _verifyObjectMetadata(
+      root: root,
+      objectId: pointer.objectId,
+      secret: secret,
+      expectedSha256: pointer.sha256,
+    );
+    final contentUrl = '$root/api/v4/storage/${pointer.objectId}/content';
     final authorization = NostrCrypto.signNip98(
       secret: secret,
       method: 'GET',
@@ -233,12 +465,80 @@ class TowerNStackStorageClient implements NStackStorageClient {
       headers: {'authorization': authorization},
     );
     if (response.statusCode != 200) {
-      throw StateError('Tower recovery fetch failed (${response.statusCode}).');
+      throw NStackStorageException('storage_fetch_failed',
+          'Tower recovery fetch failed (${response.statusCode}).',
+          statusCode: response.statusCode);
     }
-    if (NostrCrypto.sha256Hex(response.bodyBytes) != expectedSha256) {
-      throw StateError('Recovery object bytes failed hash verification.');
+    if (NostrCrypto.sha256Hex(response.bodyBytes) != pointer.sha256) {
+      throw const NStackStorageException(
+          'hash_mismatch', 'Recovery object bytes failed hash verification.');
     }
     return response.bodyBytes;
+  }
+
+  String _root(NStackBackupTarget target, String secret) {
+    final root = canonicalNStackUrl(target.hostUrl);
+    NostrIdentity? signer;
+    try {
+      signer = NostrCrypto.importIdentity(secret);
+    } catch (_) {}
+    if (root == null ||
+        !isWorkspaceUuid(target.workspaceId) ||
+        signer?.npub != target.identityNpub) {
+      throw const NStackStorageException(
+          'invalid_destination', 'The selected backup workspace is invalid.');
+    }
+    return root;
+  }
+
+  String _rowsUrl(String root, String workspaceId) =>
+      '$root/api/v4/flightdeck-pg/workspaces/$workspaceId/apps/'
+      '$nbrowserAppNpub/db/settings-backups/rows';
+
+  Future<void> _verifyObjectMetadata({
+    required String root,
+    required String objectId,
+    required String secret,
+    required String expectedSha256,
+  }) async {
+    final metadata = await _jsonRequest(
+      method: 'GET',
+      url: '$root/api/v4/storage/$objectId',
+      secret: secret,
+    );
+    if (metadata['sha256_hex']?.toString().toLowerCase() != expectedSha256 ||
+        metadata['completed_at'] == null ||
+        metadata['is_public'] == true) {
+      throw const NStackStorageException(
+          'hash_mismatch', 'Recovery object metadata or hash does not match.');
+    }
+  }
+
+  void _validateWorkspaceBinding(
+      Map<String, dynamic> response, NStackBackupTarget target) {
+    if (response['workspace_id'] != target.workspaceId ||
+        response['workspace_owner_npub'] != target.workspaceOwnerNpub) {
+      throw const NStackStorageException('workspace_mismatch',
+          'Tower response does not match the selected workspace.');
+    }
+  }
+
+  void _validatePointerRow(Map<String, dynamic> response,
+      NStackBackupTarget target, String objectId, String sha256) {
+    final row = response['row'];
+    final data = row is Map<String, dynamic> ? row['data'] : null;
+    if (row is! Map<String, dynamic> ||
+        row['row_id'] != 'current-v1' ||
+        row['owner_npub'] != target.identityNpub ||
+        row['visibility'] != 'private' ||
+        data is! Map<String, dynamic> ||
+        data['workspace_id'] != target.workspaceId ||
+        data['object_id'] != objectId ||
+        data['sha256_hex'] != sha256 ||
+        data['status'] != 'complete') {
+      throw const NStackStorageException(
+          'pointer_mismatch', 'Tower returned an invalid backup pointer.');
+    }
   }
 
   Future<Map<String, dynamic>> _jsonRequest({
@@ -262,11 +562,29 @@ class TowerNStackStorageClient implements NStackStorageClient {
     final streamed = await _client.send(request);
     final response = await http.Response.fromStream(streamed);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw StateError('Tower request failed (${response.statusCode}).');
+      String code = 'tower_request_failed';
+      String? message;
+      try {
+        final error = jsonDecode(response.body);
+        if (error is Map<String, dynamic>) {
+          code = error['code']?.toString() ?? code;
+          message = error['error']?.toString() ?? error['message']?.toString();
+        }
+      } catch (_) {}
+      if (response.statusCode == 403) {
+        message ??=
+            'Workspace access was denied. Refresh access or ask a workspace manager to enable NBrowser backup.';
+      }
+      throw NStackStorageException(
+        code,
+        message ?? 'Tower request failed (${response.statusCode}).',
+        statusCode: response.statusCode,
+      );
     }
     final decoded = jsonDecode(response.body);
     if (decoded is! Map<String, dynamic>) {
-      throw StateError('Tower returned malformed JSON.');
+      throw const NStackStorageException(
+          'invalid_response', 'Tower returned malformed JSON.');
     }
     return decoded;
   }
@@ -430,6 +748,26 @@ class NStackRecoveryService {
   final NStackRecoveryStatusStore statusStore;
   final DateTime Function() _clock;
 
+  Future<NStackBackupNamespaceState> namespaceState({
+    required String identityNpub,
+    required String secret,
+  }) async {
+    _verifyIdentity(identityNpub, null, secret);
+    final target =
+        _selectedTarget(await registryStore.load(identityNpub), identityNpub);
+    return storage.namespaceState(target: target, secret: secret);
+  }
+
+  Future<void> enableNamespace({
+    required String identityNpub,
+    required String secret,
+  }) async {
+    _verifyIdentity(identityNpub, null, secret);
+    final target =
+        _selectedTarget(await registryStore.load(identityNpub), identityNpub);
+    await storage.enableNamespace(target: target, secret: secret);
+  }
+
   Future<NStackRelayPublishResult> publish({
     required String identityNpub,
     required String publicKeyHex,
@@ -446,6 +784,8 @@ class NStackRecoveryService {
         'last_publish_failure_at': _clock().toUtc().toIso8601String(),
         'success': false,
         'error': error.runtimeType.toString(),
+        if (error is NStackStorageException) 'error_code': error.code,
+        'error_message': error.toString(),
       });
       rethrow;
     }
@@ -456,14 +796,9 @@ class NStackRecoveryService {
     required String publicKeyHex,
     required String secret,
   }) async {
-    final identity = NostrCrypto.importIdentity(secret);
-    if (identity.npub != identityNpub ||
-        identity.publicKeyHex != publicKeyHex) {
-      throw StateError('Unlock the matching identity before backup.');
-    }
+    _verifyIdentity(identityNpub, publicKeyHex, secret);
     final registry = await registryStore.load(identityNpub);
-    final host = registry.hostStack;
-    if (host == null) throw StateError('Select a host NStack first.');
+    final target = _selectedTarget(registry, identityNpub);
     final snapshot = NStackSettingsSnapshot(
       identityNpub: identityNpub,
       createdAt: _clock().toUtc(),
@@ -476,19 +811,10 @@ class NStackRecoveryService {
     );
     final bytes = utf8.encode(encryptedSnapshot);
     final hash = NostrCrypto.sha256Hex(bytes);
-    final objectId = await storage.upload(
-      hostUrl: host.url,
-      ownerNpub: identityNpub,
+    final pointer = await storage.upload(
+      target: target,
       secret: secret,
       bytes: bytes,
-      sha256: hash,
-    );
-    final workspaceId =
-        host.workspaces.isEmpty ? null : host.workspaces.first.remoteId;
-    final pointer = NStackRecoveryPointer(
-      hostUrl: host.url,
-      workspaceId: workspaceId,
-      objectId: objectId,
       sha256: hash,
       snapshotRevision: registry.revision,
       updatedAt: snapshot.createdAt,
@@ -511,7 +837,8 @@ class NStackRecoveryService {
     await statusStore.save(identityNpub, {
       'last_published_at': snapshot.createdAt.toIso8601String(),
       'last_published_event_id': event['id'],
-      'last_published_object_id': objectId,
+      'last_published_object_id': pointer.objectId,
+      'workspace_id': target.workspaceId,
       'accepted_relays': result.acceptedRelays,
       'total_relays': result.totalRelays,
       'success': result.published,
@@ -524,27 +851,18 @@ class NStackRecoveryService {
     required String publicKeyHex,
     required String secret,
   }) async {
-    final identity = NostrCrypto.importIdentity(secret);
-    if (identity.npub != identityNpub ||
-        identity.publicKeyHex != publicKeyHex) {
-      throw StateError('Unlock the matching identity before recovery.');
-    }
-    final event = selectLatestValidHint(
-      await relay.fetchHints(publicKeyHex),
-      publicKeyHex,
-    );
-    if (event == null) throw StateError('No valid recovery hint was found.');
-    final pointerJson = await nip44.decrypt(
+    _verifyIdentity(identityNpub, publicKeyHex, secret);
+    final current = await registryStore.load(identityNpub);
+    final target = _selectedTarget(current, identityNpub);
+    final pointer = await storage.readPointer(
+      target: target,
       secret: secret,
-      peerPublicKeyHex: publicKeyHex,
-      payload: event['content'].toString(),
+      relays: relay.relays,
     );
-    final pointer = NStackRecoveryPointer.parse(pointerJson);
-    final bytes = await storage.fetch(
-      hostUrl: pointer.hostUrl,
-      objectId: pointer.objectId,
+    final bytes = await storage.fetchObject(
+      target: target,
+      pointer: pointer,
       secret: secret,
-      expectedSha256: pointer.sha256,
     );
     if (NostrCrypto.sha256Hex(bytes) != pointer.sha256) {
       throw StateError('Recovery object hash mismatch.');
@@ -559,19 +877,45 @@ class NStackRecoveryService {
       throw StateError(
           'Recovery pointer revision conflicts with the snapshot.');
     }
-    final eventTime = DateTime.fromMillisecondsSinceEpoch(
-      (event['created_at'] as int) * 1000,
-      isUtc: true,
-    );
-    if (snapshot.createdAt != pointer.updatedAt ||
-        eventTime.millisecondsSinceEpoch ~/ 1000 !=
-            pointer.updatedAt.millisecondsSinceEpoch ~/ 1000) {
-      throw StateError('Recovery hint and snapshot timestamps conflict.');
+    if (snapshot.createdAt != pointer.updatedAt) {
+      throw StateError('Recovery pointer and snapshot timestamps conflict.');
     }
-    final current = await registryStore.load(identityNpub);
     if (current.revision > pointer.snapshotRevision) {
       throw StateError(
           'Recovery snapshot is older than current local settings.');
+    }
+    var event = <String, dynamic>{};
+    final candidate = selectLatestValidHint(
+      await relay.fetchHints(publicKeyHex),
+      publicKeyHex,
+    );
+    if (candidate != null) {
+      try {
+        final hintJson = await nip44.decrypt(
+          secret: secret,
+          peerPublicKeyHex: publicKeyHex,
+          payload: candidate['content'].toString(),
+        );
+        final hint = NStackRecoveryPointer.parse(hintJson);
+        final eventTime = DateTime.fromMillisecondsSinceEpoch(
+          (candidate['created_at'] as int) * 1000,
+          isUtc: true,
+        );
+        if (hint.hostUrl == pointer.hostUrl &&
+            hint.workspaceId == pointer.workspaceId &&
+            (hint.workspaceOwnerNpub == null ||
+                hint.workspaceOwnerNpub == pointer.workspaceOwnerNpub) &&
+            hint.objectId == pointer.objectId &&
+            hint.sha256 == pointer.sha256 &&
+            hint.snapshotRevision == pointer.snapshotRevision &&
+            eventTime.millisecondsSinceEpoch ~/ 1000 ==
+                pointer.updatedAt.millisecondsSinceEpoch ~/ 1000) {
+          event = Map<String, dynamic>.from(candidate);
+        }
+      } catch (_) {
+        // The workspace row is authoritative. A legacy or malformed hint can
+        // neither select another workspace nor block a valid row recovery.
+      }
     }
     return NStackRecoveryPreview(
       event: Map.unmodifiable(event),
@@ -588,10 +932,44 @@ class NStackRecoveryService {
     await registryStore.replaceAtomic(identityNpub, preview.snapshot.registry);
     await statusStore.save(identityNpub, {
       'last_restored_at': _clock().toUtc().toIso8601String(),
-      'last_restored_event_id': preview.event['id'],
+      if (preview.event['id'] != null)
+        'last_restored_event_id': preview.event['id'],
       'last_restored_object_id': preview.pointer.objectId,
       'success': true,
     });
+  }
+
+  void _verifyIdentity(
+      String identityNpub, String? publicKeyHex, String secret) {
+    final identity = NostrCrypto.importIdentity(secret);
+    if (identity.npub != identityNpub ||
+        (publicKeyHex != null && identity.publicKeyHex != publicKeyHex)) {
+      throw StateError(
+          'Unlock the matching identity before backup or recovery.');
+    }
+  }
+
+  NStackBackupTarget _selectedTarget(
+      NStackRegistry registry, String identityNpub) {
+    final destination = registry.backupDestination;
+    final stack = registry.backupStack;
+    final workspace = registry.backupWorkspace;
+    if (destination == null) {
+      throw StateError('Choose a backup workspace first.');
+    }
+    if (stack == null ||
+        workspace == null ||
+        !registry.backupDestinationAvailable) {
+      throw StateError(
+          'The selected backup workspace is unavailable. Refresh access or choose another workspace.');
+    }
+    return NStackBackupTarget(
+      hostUrl: workspace.directHttpsUrl!,
+      workspaceId: destination.workspaceRemoteId,
+      workspaceOwnerNpub: destination.workspaceOwnerNpub,
+      identityNpub: identityNpub,
+      canManageNamespace: workspace.canManageBackupNamespace,
+    );
   }
 }
 

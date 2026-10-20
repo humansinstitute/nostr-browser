@@ -106,16 +106,26 @@ class _SetupScreenState extends State<SetupScreen> {
       children: [
         Text('Setup', style: Theme.of(context).textTheme.headlineMedium),
         const SizedBox(height: 20),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.cleaning_services_outlined),
-          title: const Text('Browser data'),
-          subtitle: const Text('Clear cookies, cache, and local storage.'),
-          trailing: OutlinedButton(
+        LayoutBuilder(builder: (context, constraints) {
+          final action = OutlinedButton(
             onPressed: _busy ? null : _resetBrowserData,
             child: const Text('Reset browser data'),
-          ),
-        ),
+          );
+          final narrow = constraints.maxWidth < 500;
+          final description = ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.cleaning_services_outlined),
+            title: const Text('Browser data'),
+            subtitle: const Text('Clear cookies, cache, and local storage.'),
+            trailing: narrow ? null : action,
+          );
+          return narrow
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [description, action],
+                )
+              : description;
+        }),
         const SizedBox(height: 14),
         _fipsCard(),
         const SizedBox(height: 14),

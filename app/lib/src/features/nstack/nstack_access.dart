@@ -238,7 +238,8 @@ class NStackAccessService extends ChangeNotifier {
         in registry.stacks.where((s) => requested.contains(s.id))) {
       stackIds[stack.id] = old?.stackIds[stack.id] ?? newNStackOpaqueId();
       if (includeWorkspaces) {
-        for (final workspace in stack.workspaces) {
+        for (final workspace
+            in stack.workspaces.where((item) => item.isDiscovered)) {
           final key = '${stack.id}/${workspace.id}';
           workspaceIds[key] = old?.workspaceIds[key] ?? newNStackOpaqueId();
         }
@@ -266,8 +267,12 @@ class NStackAccessService extends ChangeNotifier {
           {
             'id': opaque,
             'name': stack.name,
+            'url': stack.url,
             'host': registry.hostStackId == stack.id,
             'available': true,
+            'stale': stack.workspaceDiscovery?.stale ?? true,
+            'lastRefreshedAt':
+                stack.workspaceDiscovery?.lastSuccessAt?.toIso8601String(),
           },
     ];
   }
@@ -291,10 +296,50 @@ class NStackAccessService extends ChangeNotifier {
     }
     return [
       for (final workspace in stack.workspaces)
-        if (state.$2.workspaceIds['${stack.id}/${workspace.id}']
-            case final opaque?)
-          {'id': opaque, 'name': workspace.name},
+        if (workspace.isDiscovered)
+          if (state.$2.workspaceIds['${stack.id}/${workspace.id}']
+              case final opaque?)
+            _workspaceDescriptor(stackId, opaque, stack, workspace),
     ];
+  }
+
+  Future<Map<String, dynamic>> getConnection({
+    required String identity,
+    required String origin,
+    required String stackId,
+    required String workspaceId,
+  }) async {
+    final state = await _state(identity, origin);
+    final internalStackId = _internalId(state.$2.stackIds, stackId);
+    if (internalStackId == null) {
+      throw const NStackException(
+          'not_disclosed', 'The NStack was not disclosed to this origin.');
+    }
+    final stack =
+        state.$1.stacks.where((s) => s.id == internalStackId).firstOrNull;
+    if (stack == null) {
+      throw const NStackException(
+          'stack_unavailable', 'The NStack is no longer available.');
+    }
+    final scoped = <String, String>{
+      for (final entry in state.$2.workspaceIds.entries)
+        if (entry.key.startsWith('$internalStackId/')) entry.key: entry.value,
+    };
+    final internalKey = _internalId(scoped, workspaceId);
+    if (internalKey == null) {
+      throw const NStackException(
+          'not_disclosed', 'The workspace was not disclosed to this origin.');
+    }
+    final internalWorkspaceId =
+        internalKey.substring(internalKey.indexOf('/') + 1);
+    final workspace = stack.workspaces
+        .where((item) => item.id == internalWorkspaceId && item.isDiscovered)
+        .firstOrNull;
+    if (workspace == null) {
+      throw const NStackException('stack_unavailable',
+          'The disclosed workspace is no longer available.');
+    }
+    return _workspaceDescriptor(stackId, workspaceId, stack, workspace);
   }
 
   Future<Map<String, dynamic>> getServiceCatalogue({
@@ -530,6 +575,23 @@ class NStackAccessService extends ChangeNotifier {
     return normalized;
   }
 }
+
+Map<String, dynamic> _workspaceDescriptor(
+  String stackAlias,
+  String workspaceAlias,
+  NStackEntry stack,
+  NStackWorkspace workspace,
+) =>
+    {
+      'id': workspaceAlias,
+      'name': workspace.name,
+      'workspaceId': workspace.remoteId,
+      'workspaceOwnerNpub': workspace.workspaceOwnerNpub,
+      'workspaceServiceNpub': workspace.workspaceServiceNpub,
+      'directHttpsUrl': workspace.directHttpsUrl ?? stack.url,
+      if (workspace.serviceNpub != null) 'serviceNpub': workspace.serviceNpub,
+      'nstack': {'id': stackAlias, 'name': stack.name, 'url': stack.url},
+    };
 
 String? _internalId(Map<String, String> ids, String opaque) {
   for (final entry in ids.entries) {

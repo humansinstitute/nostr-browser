@@ -51,6 +51,66 @@ void main() {
     );
   }
 
+  Future<void> openNewBrowserTab(WidgetTester tester) async {
+    final mobileCount = find.byKey(const ValueKey('browser-mobile-tab-count'));
+    if (mobileCount.evaluate().isNotEmpty) {
+      await tester.tap(mobileCount);
+      await tester.pumpAndSettle();
+    }
+    await tester.tap(find.byTooltip('New tab'));
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> tapBrowserTab(WidgetTester tester, int id) async {
+    final desktopTab = find.byKey(ValueKey('tab-$id'));
+    if (desktopTab.evaluate().isNotEmpty) {
+      await tester.ensureVisible(desktopTab);
+      await tester.pumpAndSettle();
+      await tester.tap(desktopTab);
+      await tester.pumpAndSettle();
+      return;
+    }
+    await tester.tap(find.byKey(const ValueKey('browser-mobile-tab-count')));
+    await tester.pumpAndSettle();
+    final card = find.byKey(ValueKey('tab-overview-$id'));
+    final shape = tester
+        .widget<Material>(
+          find.descendant(of: card, matching: find.byType(Material)).first,
+        )
+        .shape! as RoundedRectangleBorder;
+    if (shape.side.width == 3) {
+      await tester.tap(find.byTooltip('Close tab overview'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('browser-mobile-current-tab')),
+      );
+    } else {
+      await tester.tap(card);
+    }
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> closeBrowserTab(WidgetTester tester, int id) async {
+    final desktopTab = find.byKey(ValueKey('tab-$id'));
+    if (desktopTab.evaluate().isNotEmpty) {
+      await tester.tap(find.descendant(
+        of: desktopTab,
+        matching: find.byTooltip('Close tab'),
+      ));
+      await tester.pumpAndSettle();
+      return;
+    }
+    await tester.tap(find.byKey(const ValueKey('browser-mobile-tab-count')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+      of: find.byKey(ValueKey('tab-overview-$id')),
+      matching: find.byIcon(Icons.close),
+    ));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Close tab overview'));
+    await tester.pumpAndSettle();
+  }
+
   setUp(() {
     SharedPreferencesAsyncPlatform.instance =
         InMemorySharedPreferencesAsync.empty();
@@ -144,8 +204,7 @@ void main() {
       await tester.pump(const Duration(seconds: 6));
       expect(find.byTooltip('Back'), findsNothing);
 
-      await tester.tap(find.byKey(const ValueKey('tab-1')));
-      await tester.pump();
+      await tapBrowserTab(tester, 1);
 
       expect(browserContentViewportRect(tester), hiddenViewport);
       expect(find.byTooltip('Back'), findsOneWidget);
@@ -254,17 +313,11 @@ void main() {
           onOpenStatus: () {},
         ))));
         final bar = find.byKey(const ValueKey('browser-address-bar-overlay'));
-        Future<void> tapTab(int id) async {
-          await tester.ensureVisible(find.byKey(ValueKey('tab-$id')));
-          await tester.pumpAndSettle();
-          await tester.tap(find.byKey(ValueKey('tab-$id')));
-          await tester.pumpAndSettle();
-        }
+        Future<void> tapTab(int id) => tapBrowserTab(tester, id);
 
         await tester.pumpAndSettle();
         expect(bar, findsNothing);
-        await tester.tap(find.byTooltip('New tab'));
-        await tester.pumpAndSettle();
+        await openNewBrowserTab(tester);
         expect(bar, findsNothing);
         await tapTab(1); // Switching while hidden stays hidden.
         expect(activeBrowserStackIndex(tester), 0);
@@ -292,15 +345,11 @@ void main() {
         expect(bar, findsNothing);
         await tapTab(3);
         expect(bar, findsOneWidget);
-        await tester.tap(find.descendant(
-            of: find.byKey(const ValueKey('tab-3')),
-            matching: find.byTooltip('Close tab')));
-        await tester.pumpAndSettle();
+        await closeBrowserTab(tester, 3);
         expect(bar, findsNothing);
         await tapTab(2);
         expect(bar, findsOneWidget);
-        await tester.tap(find.byTooltip('New tab'));
-        await tester.pumpAndSettle();
+        await openNewBrowserTab(tester);
         expect(bar, findsNothing);
         await tester.pump(const Duration(seconds: 6));
         expect(bar, findsNothing);
@@ -319,10 +368,7 @@ void main() {
         for (final id in [4, 2, if (platform != TargetPlatform.macOS) 1]) {
           await tapTab(id);
           expect(bar, findsOneWidget);
-          await tester.tap(find.descendant(
-              of: find.byKey(ValueKey('tab-$id')),
-              matching: find.byTooltip('Close tab')));
-          await tester.pumpAndSettle();
+          await closeBrowserTab(tester, id);
           expect(bar, findsNothing);
         }
         expect(find.text('New Tab'), findsOneWidget);
@@ -805,13 +851,13 @@ void main() {
         '{"version":1,"active_index":0,"tabs":[{"title":"New Tab","url":null,"is_home":true}]}');
   });
 
-  testWidgets('iPhone-width strip scrolls and reorders ordinary tabs',
+  testWidgets('desktop-width strip scrolls and reorders ordinary tabs',
       (tester) async {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(393, 852);
-    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    tester.view.physicalSize = const Size(900, 700);
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     try {
       await tester.pumpWidget(
         MaterialApp(
@@ -876,10 +922,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(activeBrowserStackIndex(tester), 3);
 
-      await tester.drag(strip, const Offset(1000, 0));
-      await tester.pumpAndSettle();
-      expect(find.byKey(firstTabKey), findsOneWidget);
-      expect(tester.getRect(find.byKey(firstTabKey)).left, stripRect.left + 4);
+      expect(find.byKey(const ValueKey('browser-mobile-tab-header')),
+          findsNothing);
     } finally {
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
@@ -1099,8 +1143,7 @@ void main() {
     await tester.tapAt(const Offset(500, 300));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('New tab'));
-    await tester.pumpAndSettle();
+    await openNewBrowserTab(tester);
     const canonicalUrl = 'https://example.com/projects/one?view=board#today';
     expect(fakeLoadedHtmlStrings.last, contains('example.com'));
     expect(fakeLoadedHtmlStrings.last, contains(canonicalUrl));
@@ -1216,8 +1259,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('New tab'));
-    await tester.pumpAndSettle();
+    await openNewBrowserTab(tester);
 
     expect(tester.takeException(), isNull);
     expect(fakeLoadedHtmlStrings.last, contains(longTitle));
@@ -1362,7 +1404,9 @@ void main() {
         (tester) async {
       debugDefaultTargetPlatformOverride = platform;
       try {
-        tester.view.physicalSize = const Size(393, 852);
+        tester.view.physicalSize = platform == TargetPlatform.macOS
+            ? const Size(1280, 852)
+            : const Size(393, 852);
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.resetPhysicalSize);
         addTearDown(tester.view.resetDevicePixelRatio);
@@ -1397,16 +1441,18 @@ void main() {
               .exitFocusMode();
           await tester.pump();
         }
-        await tester.tap(find.byTooltip('New tab'));
-        await tester.pump();
-        await tester.tap(find.byTooltip('New tab'));
-        await tester.pump();
-        // Exercise the actual reorder callback: the selected last tab moves first.
-        tester
-            .widget<ReorderableListView>(find.byType(ReorderableListView))
-            .onReorderItem!(2, 0);
-        await tester.pumpAndSettle();
-        expect(activeBrowserStackIndex(tester), 0);
+        await openNewBrowserTab(tester);
+        await openNewBrowserTab(tester);
+        if (!mobile) {
+          // Desktop retains reordering: the selected last tab moves first.
+          tester
+              .widget<ReorderableListView>(find.byType(ReorderableListView))
+              .onReorderItem!(2, 0);
+          await tester.pumpAndSettle();
+          expect(activeBrowserStackIndex(tester), 0);
+        } else {
+          expect(activeBrowserStackIndex(tester), 2);
+        }
         final controllers = tester
             .widgetList<WebViewWidget>(
                 find.byType(WebViewWidget, skipOffstage: false))
@@ -1416,9 +1462,10 @@ void main() {
         final htmlLoads = [...fakeLoadedHtmlStrings];
         await tester.tap(find.byTooltip('Enter Focus Mode'));
         await tester.pump();
-        for (final index in [1, 2, 0, 1]) {
+        final expectedIndexes = mobile ? [0, 1, 2, 0] : [0, 0, 0, 0];
+        for (final index in expectedIndexes) {
           await next();
-          expect(activeBrowserStackIndex(tester), mobile ? index : 0);
+          expect(activeBrowserStackIndex(tester), index);
           expect(find.byTooltip('Enter Focus Mode'), findsNothing);
         }
         expect(
@@ -1438,7 +1485,7 @@ void main() {
           expect(find.text('Show controls'), findsOneWidget);
           await tester.tap(find.text('Show controls'));
           await tester.pumpAndSettle();
-          expect(activeBrowserStackIndex(tester), 1);
+          expect(activeBrowserStackIndex(tester), 0);
         }
       } finally {
         await tester.pumpWidget(const SizedBox.shrink());
@@ -1476,12 +1523,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('New tab'));
-    await tester.pump();
+    await openNewBrowserTab(tester);
     expect(activeBrowserStackIndex(tester), 1);
-    expect(find.text('New Tab'), findsNWidgets(2));
-    expect(find.byKey(const ValueKey('tab-1')), findsOneWidget);
-    expect(find.byKey(const ValueKey('tab-2')), findsOneWidget);
+    expect(find.text('New Tab'), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('browser-mobile-tab-count')), findsOneWidget);
+    expect(find.text('2'), findsOneWidget);
     final controllerCountBeforeFocus = fakeWebViewControllerCreationCount;
 
     await tester.tap(find.byTooltip('Enter Focus Mode'));
@@ -1521,9 +1568,10 @@ void main() {
     expect(find.byTooltip('Open menu'), findsOneWidget);
     expect(find.byTooltip('Profile'), findsOneWidget);
     expect(find.bySemanticsLabel('Enter Focus Mode'), findsOneWidget);
-    expect(find.text('New Tab'), findsNWidgets(2));
-    expect(find.byKey(const ValueKey('tab-1')), findsOneWidget);
-    expect(find.byKey(const ValueKey('tab-2')), findsOneWidget);
+    expect(find.text('New Tab'), findsOneWidget);
+    expect(
+        find.byKey(const ValueKey('browser-mobile-tab-count')), findsOneWidget);
+    expect(find.text('2'), findsOneWidget);
     expect(fakeWebViewControllerCreationCount, controllerCountBeforeFocus);
 
     await tester.tap(find.byTooltip('Enter Focus Mode'));

@@ -2,6 +2,8 @@ package com.wingmanbefree.wingman_app
 
 import android.app.Activity
 import com.wingmanbefree.wingman_app.grasp.GraspChannelCoordinator
+import com.wingmanbefree.wingman_app.download.BrowserDownloadCoordinator
+import com.wingmanbefree.wingman_app.snapshot.BrowserSnapshotCoordinator
 import io.flutter.plugins.webviewflutter.WebViewFlutterPlugin
 import androidx.activity.result.contract.ActivityResultContracts
 import com.wingmanbefree.wingman_app.filepicker.FilePickerPlatformContract
@@ -19,6 +21,9 @@ class MainActivity : FlutterFragmentActivity() {
     private var fipsChannel: MethodChannel? = null
     private var filePickerCoordinator: WebViewFilePickerCoordinator? = null
     private var filePickerChannel: MethodChannel? = null
+    private var snapshotChannel: MethodChannel? = null
+    private var downloadCoordinator: BrowserDownloadCoordinator? = null
+    private var downloadChannel: MethodChannel? = null
 
     private val vpnConsentLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -37,6 +42,10 @@ class MainActivity : FlutterFragmentActivity() {
     private val openMultipleDocumentsLauncher = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris -> filePickerCoordinator?.complete(uris.map { it.toString() }) }
+
+    private val downloadDestinationLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream"),
+    ) { uri -> downloadCoordinator?.completeLegacyDestination(uri?.toString()) }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -80,6 +89,29 @@ class MainActivity : FlutterFragmentActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             FilePickerPlatformContract.CHANNEL,
         ).also { it.setMethodCallHandler(pickerCoordinator) }
+        snapshotChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            BrowserSnapshotCoordinator.CHANNEL,
+        ).also {
+            it.setMethodCallHandler(BrowserSnapshotCoordinator { id ->
+                (flutterEngine.plugins.get(WebViewFlutterPlugin::class.java) as? WebViewFlutterPlugin)
+                    ?.instanceManager?.getInstance(id) as? android.webkit.WebView
+            })
+        }
+        val nativeDownloadChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            BrowserDownloadCoordinator.CHANNEL,
+        )
+        downloadChannel = nativeDownloadChannel
+        downloadCoordinator = BrowserDownloadCoordinator(
+            this,
+            nativeDownloadChannel,
+            lookup = { id ->
+                (flutterEngine.plugins.get(WebViewFlutterPlugin::class.java) as? WebViewFlutterPlugin)
+                    ?.instanceManager?.getInstance(id) as? android.webkit.WebView
+            },
+            launchLegacyDestination = downloadDestinationLauncher::launch,
+        ).also { nativeDownloadChannel.setMethodCallHandler(it) }
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
@@ -91,6 +123,12 @@ class MainActivity : FlutterFragmentActivity() {
         filePickerChannel = null
         filePickerCoordinator?.destroy()
         filePickerCoordinator = null
+        snapshotChannel?.setMethodCallHandler(null)
+        snapshotChannel = null
+        downloadChannel?.setMethodCallHandler(null)
+        downloadChannel = null
+        downloadCoordinator?.destroy()
+        downloadCoordinator = null
         fipsChannel?.setMethodCallHandler(null)
         fipsChannel = null
         fipsCoordinator?.destroy()
@@ -101,6 +139,8 @@ class MainActivity : FlutterFragmentActivity() {
     override fun onDestroy() {
         filePickerCoordinator?.destroy()
         filePickerCoordinator = null
+        downloadCoordinator?.destroy()
+        downloadCoordinator = null
         fipsCoordinator?.destroy()
         fipsCoordinator = null
         graspCoordinator?.destroy()

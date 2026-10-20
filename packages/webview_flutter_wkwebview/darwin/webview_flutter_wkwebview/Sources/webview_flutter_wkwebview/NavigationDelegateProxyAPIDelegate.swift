@@ -8,6 +8,41 @@ import WebKit
 public class NavigationDelegateImpl: NSObject, WKNavigationDelegate {
   let api: PigeonApiProtocolWKNavigationDelegate
   unowned let registrar: ProxyAPIRegistrar
+  private var authenticationHeadersByURL: [String: [String: String]] = [:]
+
+  private func authenticationHeaders(for request: URLRequest) -> [String: String] {
+    guard let value = request.value(forHTTPHeaderField: "Authorization"), !value.isEmpty else {
+      return [:]
+    }
+    return ["authorization": value]
+  }
+
+  private func isDirectDownloadURL(_ url: URL?) -> Bool {
+    guard let url, url.scheme == "http" || url.scheme == "https" else { return false }
+    let extensions: Set<String> = [
+      "7z", "apk", "avi", "bin", "bz2", "csv", "doc", "docx", "dmg", "epub", "gz",
+      "ics", "iso", "json", "m4a", "mkv", "mov", "mp3", "mp4", "odp", "ods", "odt",
+      "pdf", "pkg", "ppt", "pptx", "rar", "rtf", "tar", "tgz", "txt", "wav", "webm",
+      "xls", "xlsx", "xml", "xz", "zip",
+    ]
+    return extensions.contains(url.pathExtension.lowercased())
+  }
+
+  private func authenticationHeaders(for responseURL: URL?) -> [String: String] {
+    guard let responseURL else { return [:] }
+    func effectivePort(_ url: URL) -> Int? {
+      url.port ?? (url.scheme?.lowercased() == "https" ? 443 : 80)
+    }
+    let match = authenticationHeadersByURL.first { rawURL, _ in
+      guard let requestURL = URL(string: rawURL) else { return false }
+      return requestURL.scheme?.lowercased() == responseURL.scheme?.lowercased()
+        && requestURL.host?.lowercased() == responseURL.host?.lowercased()
+        && effectivePort(requestURL) == effectivePort(responseURL)
+    }
+    guard let match else { return [:] }
+    authenticationHeadersByURL.removeValue(forKey: match.key)
+    return match.value
+  }
 
   init(api: PigeonApiProtocolWKNavigationDelegate, registrar: ProxyAPIRegistrar) {
     self.api = api
@@ -83,6 +118,25 @@ public class NavigationDelegateImpl: NSObject, WKNavigationDelegate {
       _ webView: WKWebView, decidePolicyFor navigationAction: WebKit.WKNavigationAction,
       decisionHandler: @escaping @MainActor (WebKit.WKNavigationActionPolicy) -> Void
     ) {
+      let headers = authenticationHeaders(for: navigationAction.request)
+      if let url = navigationAction.request.url, !headers.isEmpty {
+        authenticationHeadersByURL[url.absoluteString] = headers
+      }
+      var shouldDownload = isDirectDownloadURL(navigationAction.request.url)
+      if #available(iOS 14.5, macOS 11.3, *) {
+        shouldDownload = shouldDownload || navigationAction.shouldPerformDownload
+      }
+      if let bridge = BrowserDownloadBridge.shared, shouldDownload {
+        bridge.request(
+          url: navigationAction.request.url,
+          signal: isDirectDownloadURL(navigationAction.request.url) ? "directLink" : "htmlDownload",
+          suggestedFilename: navigationAction.request.url?.lastPathComponent,
+          contentDisposition: nil, mimeType: nil, headers: headers
+        ) { accepted in
+          DispatchQueue.main.async { decisionHandler(accepted ? .cancel : .allow) }
+        }
+        return
+      }
       registrar.dispatchOnMainThread { onFailure in
         self.api.decidePolicyForNavigationAction(
           pigeonInstance: self, webView: webView, navigationAction: navigationAction
@@ -120,6 +174,25 @@ public class NavigationDelegateImpl: NSObject, WKNavigationDelegate {
       _ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
       decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
+      let headers = authenticationHeaders(for: navigationAction.request)
+      if let url = navigationAction.request.url, !headers.isEmpty {
+        authenticationHeadersByURL[url.absoluteString] = headers
+      }
+      var shouldDownload = isDirectDownloadURL(navigationAction.request.url)
+      if #available(iOS 14.5, macOS 11.3, *) {
+        shouldDownload = shouldDownload || navigationAction.shouldPerformDownload
+      }
+      if let bridge = BrowserDownloadBridge.shared, shouldDownload {
+        bridge.request(
+          url: navigationAction.request.url,
+          signal: isDirectDownloadURL(navigationAction.request.url) ? "directLink" : "htmlDownload",
+          suggestedFilename: navigationAction.request.url?.lastPathComponent,
+          contentDisposition: nil, mimeType: nil, headers: headers
+        ) { accepted in
+          DispatchQueue.main.async { decisionHandler(accepted ? .cancel : .allow) }
+        }
+        return
+      }
       registrar.dispatchOnMainThread { onFailure in
         self.api.decidePolicyForNavigationAction(
           pigeonInstance: self, webView: webView, navigationAction: navigationAction
@@ -159,6 +232,23 @@ public class NavigationDelegateImpl: NSObject, WKNavigationDelegate {
       _ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
       decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void
     ) {
+      if let bridge = BrowserDownloadBridge.shared,
+        let response = navigationResponse.response as? HTTPURLResponse
+      {
+        let disposition = response.value(forHTTPHeaderField: "Content-Disposition")
+        let attachment = disposition?.split(separator: ";", maxSplits: 1).first?
+          .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "attachment"
+        let headers = authenticationHeaders(for: response.url)
+        if attachment || !navigationResponse.canShowMIMEType {
+          bridge.request(
+            url: response.url, signal: "response", suggestedFilename: response.suggestedFilename,
+            contentDisposition: disposition, mimeType: response.mimeType, headers: headers
+          ) { accepted in
+            DispatchQueue.main.async { decisionHandler(accepted ? .cancel : .allow) }
+          }
+          return
+        }
+      }
       registrar.dispatchOnMainThread { onFailure in
         self.api.decidePolicyForNavigationResponse(
           pigeonInstance: self, webView: webView, navigationResponse: navigationResponse
@@ -196,6 +286,23 @@ public class NavigationDelegateImpl: NSObject, WKNavigationDelegate {
       _ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
       decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
     ) {
+      if let bridge = BrowserDownloadBridge.shared,
+        let response = navigationResponse.response as? HTTPURLResponse
+      {
+        let disposition = response.value(forHTTPHeaderField: "Content-Disposition")
+        let attachment = disposition?.split(separator: ";", maxSplits: 1).first?
+          .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "attachment"
+        let headers = authenticationHeaders(for: response.url)
+        if attachment || !navigationResponse.canShowMIMEType {
+          bridge.request(
+            url: response.url, signal: "response", suggestedFilename: response.suggestedFilename,
+            contentDisposition: disposition, mimeType: response.mimeType, headers: headers
+          ) { accepted in
+            DispatchQueue.main.async { decisionHandler(accepted ? .cancel : .allow) }
+          }
+          return
+        }
+      }
       registrar.dispatchOnMainThread { onFailure in
         self.api.decidePolicyForNavigationResponse(
           pigeonInstance: self, webView: webView, navigationResponse: navigationResponse
@@ -279,7 +386,6 @@ public class NavigationDelegateImpl: NSObject, WKNavigationDelegate {
     }
   #endif
 }
-
 /// ProxyApi implementation for `WKNavigationDelegate`.
 ///
 /// This class may handle instantiating native object instances that are attached to a Dart instance

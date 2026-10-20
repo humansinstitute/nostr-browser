@@ -32,8 +32,13 @@ class NStackRegistryStore extends ChangeNotifier {
       }
     }
     registry ??= const NStackRegistry();
-    _cache[identity] = registry;
-    return registry;
+    final migrated = _migrateLegacyBackupDestination(registry);
+    if (!identical(migrated, registry)) {
+      await _preferences.setString(
+          '$keyPrefix$identity', jsonEncode(migrated.toJson()));
+    }
+    _cache[identity] = migrated;
+    return migrated;
   }
 
   Future<void> replaceAtomic(String signerNpub, NStackRegistry registry) async {
@@ -96,6 +101,99 @@ class NStackRegistryStore extends ChangeNotifier {
     return next;
   }
 
+  Future<NStackEntry> applyWorkspaceDiscovery(
+    String signerNpub, {
+    required NStackEntry candidate,
+    required List<NStackWorkspace> discovered,
+    required DateTime refreshedAt,
+    String? expectedPreviousUrl,
+  }) async {
+    final current = await load(signerNpub);
+    final existing =
+        current.stacks.where((stack) => stack.id == candidate.id).firstOrNull;
+    if (existing != null &&
+        existing.url != (expectedPreviousUrl ?? candidate.url)) {
+      throw StateError('NStack address changed during discovery.');
+    }
+    final source = existing?.copyWith(url: candidate.url) ?? candidate;
+    final oldByStableIdentity = <String, NStackWorkspace>{
+      for (final workspace in source.workspaces)
+        _workspaceStableIdentity(workspace): workspace,
+    };
+    final oldLegacyByRemoteId = <String, NStackWorkspace>{
+      for (final workspace in source.workspaces)
+        if (!workspace.isDiscovered) workspace.remoteId: workspace,
+    };
+    final merged = <NStackWorkspace>[
+      for (final workspace in discovered)
+        NStackWorkspace(
+          id: oldByStableIdentity[_workspaceStableIdentity(workspace)]?.id ??
+              oldLegacyByRemoteId[workspace.remoteId]?.id ??
+              newNStackOpaqueId(),
+          name: workspace.name,
+          remoteId: workspace.remoteId,
+          stableRemoteId: workspace.stableRemoteId,
+          workspaceOwnerNpub: workspace.workspaceOwnerNpub,
+          workspaceServiceNpub: workspace.workspaceServiceNpub,
+          directHttpsUrl: workspace.directHttpsUrl,
+          serviceNpub: workspace.serviceNpub,
+          membershipRole: workspace.membershipRole,
+        ),
+    ];
+    final nextEntry = source.copyWith(
+      name: Uri.parse(source.url).host,
+      workspaces: List.unmodifiable(merged),
+      workspaceDiscovery: NStackWorkspaceDiscoveryStatus(
+        lastAttemptAt: refreshedAt.toUtc(),
+        lastSuccessAt: refreshedAt.toUtc(),
+        stale: false,
+      ),
+    );
+    final next = current.next(
+      stacks: [
+        for (final stack in current.stacks)
+          if (stack.id != nextEntry.id) stack,
+        nextEntry,
+      ],
+      activeStackId: current.activeStackId ?? nextEntry.id,
+    );
+    await replaceAtomic(signerNpub, next);
+    return nextEntry;
+  }
+
+  Future<NStackEntry> markWorkspaceDiscoveryFailure(
+    String signerNpub, {
+    required String stackId,
+    required String expectedUrl,
+    required DateTime attemptedAt,
+    required String errorCode,
+    required String errorMessage,
+  }) async {
+    final current = await load(signerNpub);
+    final stack =
+        current.stacks.where((item) => item.id == stackId).firstOrNull;
+    if (stack == null || stack.url != expectedUrl) {
+      throw StateError('NStack changed during discovery.');
+    }
+    final nextEntry = stack.copyWith(
+      workspaceDiscovery: NStackWorkspaceDiscoveryStatus(
+        lastAttemptAt: attemptedAt.toUtc(),
+        lastSuccessAt: stack.workspaceDiscovery?.lastSuccessAt,
+        stale: true,
+        errorCode: errorCode,
+        errorMessage: errorMessage,
+      ),
+    );
+    await replaceAtomic(
+      signerNpub,
+      current.next(stacks: [
+        for (final item in current.stacks)
+          if (item.id == stackId) nextEntry else item,
+      ]),
+    );
+    return nextEntry;
+  }
+
   Future<NStackRegistry> remove(String signerNpub, String stackId) async {
     final current = await load(signerNpub);
     final nextStacks = current.stacks.where((s) => s.id != stackId).toList();
@@ -124,6 +222,47 @@ class NStackRegistryStore extends ChangeNotifier {
     await replaceAtomic(
       signerNpub,
       current.next(hostStackId: stackId, clearHost: stackId == null),
+    );
+  }
+
+  Future<void> selectBackupDestination(
+    String signerNpub, {
+    required String stackId,
+    required String workspaceId,
+  }) async {
+    final current = await load(signerNpub);
+    final stack =
+        current.stacks.where((item) => item.id == stackId).firstOrNull;
+    final workspace =
+        stack?.workspaces.where((item) => item.id == workspaceId).firstOrNull;
+    if (stack == null ||
+        workspace == null ||
+        !workspace.supportsBackup ||
+        stack.workspaceDiscovery?.stale == true) {
+      throw StateError('Choose a currently accessible Flight Deck workspace.');
+    }
+    await replaceAtomic(
+      signerNpub,
+      current.next(
+        backupDestination: NStackBackupDestination(
+          stackId: stack.id,
+          workspaceId: workspace.id,
+          workspaceRemoteId: workspace.remoteId,
+          workspaceOwnerNpub: workspace.workspaceOwnerNpub!,
+        ),
+        backupDestinationMigrationVersion: 1,
+      ),
+    );
+  }
+
+  Future<void> clearBackupDestination(String signerNpub) async {
+    final current = await load(signerNpub);
+    await replaceAtomic(
+      signerNpub,
+      current.next(
+        clearBackupDestination: true,
+        backupDestinationMigrationVersion: 1,
+      ),
     );
   }
 
@@ -173,6 +312,42 @@ class NStackRegistryStore extends ChangeNotifier {
       ),
     );
   }
+}
+
+NStackRegistry _migrateLegacyBackupDestination(NStackRegistry registry) {
+  if (registry.backupDestinationMigrationVersion >= 1 ||
+      registry.backupDestination != null) {
+    return registry;
+  }
+  NStackBackupDestination? destination;
+  final host = registry.hostStack;
+  if (host == null) return registry;
+  if (host.workspaceDiscovery?.stale != true) {
+    final accessible = host.workspaces
+        .where((workspace) => workspace.supportsBackup)
+        .toList(growable: false);
+    if (accessible.length == 1) {
+      final workspace = accessible.single;
+      destination = NStackBackupDestination(
+        stackId: host.id,
+        workspaceId: workspace.id,
+        workspaceRemoteId: workspace.remoteId,
+        workspaceOwnerNpub: workspace.workspaceOwnerNpub!,
+      );
+    }
+  }
+  return registry.next(
+    backupDestination: destination,
+    clearBackupDestination: destination == null,
+    backupDestinationMigrationVersion: 1,
+  );
+}
+
+String _workspaceStableIdentity(NStackWorkspace workspace) =>
+    '${workspace.stableRemoteId ?? workspace.remoteId}\u0000${workspace.workspaceOwnerNpub ?? ''}';
+
+extension _FirstOrNull<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
 }
 
 String newNStackOpaqueId() {

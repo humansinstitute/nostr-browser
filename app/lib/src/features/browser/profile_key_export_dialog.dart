@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../../widgets/immediate_pin_field.dart';
 import 'package:flutter/services.dart';
 
 class ProfileKeyExportDialog extends StatefulWidget {
@@ -101,13 +102,10 @@ class _ProfileKeyExportDialogState extends State<ProfileKeyExportDialog>
                               setState(() => _accepted = value ?? false),
                       title: const Text(
                           'I understand the risk of exposing my private key.')),
-                  TextField(
+                  ImmediatePinField(
                       controller: _pin,
                       obscureText: true,
-                      enableSuggestions: false,
-                      autocorrect: false,
                       enabled: !_busy,
-                      keyboardType: TextInputType.number,
                       inputFormatters: [
                         FilteringTextInputFormatter.digitsOnly,
                         LengthLimitingTextInputFormatter(12)

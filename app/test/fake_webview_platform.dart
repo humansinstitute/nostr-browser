@@ -67,6 +67,13 @@ void submitFakePageFinished({
   _fakeWebViewControllers[controllerIndex].finish(url);
 }
 
+void submitFakePageStarted({
+  required int controllerIndex,
+  required String url,
+}) {
+  _fakeWebViewControllers[controllerIndex].start(url);
+}
+
 void installFakeWebViewPlatform() {
   fakeLoadedHtmlStrings.clear();
   fakeLoadedRequestUrls.clear();
@@ -217,6 +224,11 @@ class _FakePlatformWebViewController extends PlatformWebViewController
     _currentUrl = url;
     _navigationDelegate?.finish(url);
   }
+
+  void start(String url) {
+    _currentUrl = url;
+    _navigationDelegate?.start(url);
+  }
 }
 
 class _FakePlatformNavigationDelegate extends PlatformNavigationDelegate
@@ -267,6 +279,10 @@ class _FakePlatformNavigationDelegate extends PlatformNavigationDelegate
 
   void finish(String url) {
     _onPageFinished?.call(url);
+  }
+
+  void start(String url) {
+    _onPageStarted?.call(url);
   }
 
   void changeUrl(String url) {

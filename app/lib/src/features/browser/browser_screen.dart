@@ -11,6 +11,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
+import '../../theme/browser_theme.dart';
 import '../../core/app_config.dart';
 import '../../core/tower_fips_proxy.dart';
 import '../../core/fips_app_target.dart';
@@ -27,6 +28,9 @@ import 'profile_key_export_dialog.dart';
 import 'browser_bookmark_store.dart';
 import 'bookmark_editor.dart';
 import 'browser_app_selector.dart';
+import 'browser_download.dart';
+import 'browser_navigation_state.dart';
+import 'browser_snapshot.dart';
 import 'nostr_profile_publisher.dart';
 import 'nostr_profile_relay_client.dart';
 import 'nostr_profile_store.dart';
@@ -39,6 +43,13 @@ import 'grasp_android_channel.dart';
 import '../nstack/nstack_access.dart';
 import '../nstack/nstack_bridge_script.dart';
 import '../nstack/nstack_store.dart';
+
+@visibleForTesting
+bool useAndroidHomeHtmlLoader({
+  required bool isAndroid,
+  required int? nativeWebViewIdentifier,
+}) =>
+    isAndroid && nativeWebViewIdentifier != null;
 
 class BrowserScreen extends StatefulWidget {
   const BrowserScreen({
@@ -108,11 +119,14 @@ class BrowserScreenState extends State<BrowserScreen>
   bool _focusMode = false;
   static const _nip44PolicyTarget = '*';
   static const _tabClickAddressReveal = Duration(seconds: 3);
+  static const _mobileChromeBreakpoint = 600.0;
   static const _homeTitle = 'New Tab';
   static const _flightDeckTitle = 'Flight Deck';
   static const _browserSignerKey = 'wingman.browser.last_signer_npub.v1';
   static const _browserTabsKeyPrefix = 'wingman.browser.tabs.v3.';
   final WebViewCookieManager _cookieManager = WebViewCookieManager();
+  late final BrowserDownloadCoordinator _downloadCoordinator;
+  final Map<String, int> _downloadProgress = {};
   final NostrProfileStore _profileStore = NostrProfileStore();
   late final NostrProfileRelayClient _profileRelayClient =
       widget.profileRelayClient ?? NostrProfileRelayClient();
@@ -151,6 +165,14 @@ class BrowserScreenState extends State<BrowserScreen>
   @override
   void initState() {
     super.initState();
+    _downloadCoordinator = BrowserDownloadCoordinator(
+      cookieManager: _cookieManager,
+      onStarted: _onDownloadStarted,
+      onProgress: _onDownloadProgress,
+      onCompleted: _onDownloadCompleted,
+      onCancelled: _onDownloadCancelled,
+      onFailed: _onDownloadFailed,
+    );
     WidgetsBinding.instance.addObserver(this);
     HardwareKeyboard.instance.addHandler(_handleKeyboardEvent);
     unawaited(_diagnosticsStore.prune().catchError((Object _) {}));
@@ -208,6 +230,7 @@ class BrowserScreenState extends State<BrowserScreen>
 
   @override
   void dispose() {
+    _downloadCoordinator.dispose();
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_fipsEnabledSubscription?.cancel());
     HardwareKeyboard.instance.removeHandler(_handleKeyboardEvent);
@@ -328,7 +351,15 @@ class BrowserScreenState extends State<BrowserScreen>
     return SafeArea(bottom: false, child: content);
   }
 
-  Widget _buildTabBar(BuildContext context) {
+  Widget _buildTabBar(BuildContext context) => Theme(
+        data: BrowserTheme.chrome(Theme.of(context)),
+        child: Builder(builder: _buildTabBarContents),
+      );
+
+  Widget _buildTabBarContents(BuildContext context) {
+    if (MediaQuery.sizeOf(context).width < _mobileChromeBreakpoint) {
+      return _buildMobileTabHeader(context);
+    }
     final theme = Theme.of(context);
     final availableWidth = MediaQuery.sizeOf(context).width -
         MediaQuery.paddingOf(context).horizontal;
@@ -377,6 +408,7 @@ class BrowserScreenState extends State<BrowserScreen>
                     final button = _BrowserTabButton(
                       title: tab.label,
                       active: active,
+                      loading: tab.navigation.isLoading,
                       tabColour: _tabColours[tab.colour],
                       onSecondaryTapUp: (details) =>
                           _showTabMenu(tab, details.globalPosition),
@@ -433,7 +465,190 @@ class BrowserScreenState extends State<BrowserScreen>
     );
   }
 
-  Widget _buildAddressBar(BuildContext context) {
+  Widget _buildMobileTabHeader(BuildContext context) {
+    final theme = Theme.of(context);
+    final tab = _activeTab;
+    return Material(
+      key: const ValueKey('browser-mobile-tab-header'),
+      color: theme.colorScheme.surfaceContainerHighest,
+      shape: Border(
+        bottom: BorderSide(color: theme.colorScheme.outlineVariant),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: SizedBox(
+          height: 48,
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: 'Open menu',
+                onPressed: widget.onOpenDrawer,
+                icon: const Icon(Icons.menu),
+              ),
+              Expanded(
+                child: Semantics(
+                  button: true,
+                  label: 'Current tab: ${tab.label}',
+                  child: InkWell(
+                    key: const ValueKey('browser-mobile-current-tab'),
+                    onTap: () => _activateTab(tab.id),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Row(
+                        children: [
+                          if (tab.navigation.isLoading) ...[
+                            const _BrowserLoadingIndicator(
+                              key: ValueKey('mobile-tab-loading'),
+                              size: 18,
+                            ),
+                            const SizedBox(width: 8),
+                          ],
+                          Expanded(
+                            child: Text(
+                              tab.label,
+                              key: const ValueKey('browser-mobile-tab-title'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                color: theme.colorScheme.onSurface,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: EdgeInsets.zero,
+                child: BrowserTabCountButton(
+                  key: const ValueKey('browser-mobile-tab-count'),
+                  count: _tabs.length,
+                  onPressed: _showMobileTabOverview,
+                ),
+              ),
+              Semantics(
+                label: 'Enter Focus Mode',
+                button: true,
+                excludeSemantics: true,
+                child: IconButton(
+                  key: const ValueKey('enter-focus-mode-button'),
+                  tooltip: 'Enter Focus Mode',
+                  onPressed: _enterFocusMode,
+                  icon: const Icon(Icons.fullscreen),
+                ),
+              ),
+              _BrowserAvatarMenu(
+                deviceNpub: widget.config.deviceNpub,
+                profile: _profile,
+                onEditProfile: widget.config.hasDeviceSecret
+                    ? _editProfile
+                    : widget.onOpenIdentity ?? widget.onOpenSigner,
+                identityActionLabel: widget.config.hasDeviceSecret
+                    ? 'Edit profile'
+                    : widget.config.hasDeviceNpub
+                        ? 'Unlock identity'
+                        : 'Create identity / Import key',
+                onOpenSetup: widget.onOpenSetup,
+                onOpenSigner: widget.onOpenSigner,
+                onOpenStatus: widget.onOpenStatus,
+                onLogOut: widget.onLogOut,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showMobileTabOverview() async {
+    await _captureTabPreview(_activeTab);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      useSafeArea: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, updateOverview) => Dialog.fullscreen(
+          child: SafeArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                AppBar(
+                  automaticallyImplyLeading: false,
+                  title: Text('Tabs (${_tabs.length})'),
+                  actions: [
+                    IconButton(
+                      tooltip: 'New tab',
+                      onPressed: () {
+                        _createHomeTab();
+                        Navigator.of(dialogContext).pop();
+                      },
+                      icon: const Icon(Icons.add),
+                    ),
+                    IconButton(
+                      tooltip: 'Close tab overview',
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final columns = constraints.maxWidth >= 720 ? 3 : 2;
+                      return GridView.builder(
+                        key: const ValueKey('browser-mobile-tab-overview'),
+                        padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          childAspectRatio:
+                              constraints.maxWidth > constraints.maxHeight
+                                  ? 1.55
+                                  : 0.82,
+                        ),
+                        itemCount: _tabs.length,
+                        itemBuilder: (context, index) {
+                          final tab = _tabs[index];
+                          return _MobileTabOverviewCard(
+                            key: ValueKey('tab-overview-${tab.id}'),
+                            title: tab.label,
+                            url: tab.currentUrl ?? tab.addressController.text,
+                            active: tab.id == _activeTabId,
+                            isHome: tab.isHome,
+                            isFips: tab.isFips,
+                            loading: tab.navigation.isLoading,
+                            previewBytes: tab.previewBytes,
+                            onSelect: () {
+                              Navigator.of(dialogContext).pop();
+                              if (tab.id != _activeTabId) _activateTab(tab.id);
+                            },
+                            onClose: () {
+                              _closeTab(tab.id);
+                              updateOverview(() {});
+                            },
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAddressBar(BuildContext context) => Theme(
+        data: BrowserTheme.chrome(Theme.of(context)),
+        child: Builder(builder: _buildAddressBarContents),
+      );
+
+  Widget _buildAddressBarContents(BuildContext context) {
     final tab = _activeTab;
     final theme = Theme.of(context);
     return Material(
@@ -458,13 +673,17 @@ class BrowserScreenState extends State<BrowserScreen>
               icon: const Icon(Icons.arrow_forward),
             ),
             IconButton(
-              tooltip: 'Reload',
+              key: const ValueKey('browser-reload-button'),
+              tooltip: tab.navigation.isLoading ? 'Refreshing page' : 'Reload',
               onPressed: _reload,
-              icon: const Icon(Icons.refresh),
+              icon: tab.navigation.isLoading
+                  ? const _BrowserLoadingIndicator(size: 20)
+                  : const Icon(Icons.refresh),
             ),
             Expanded(
               child: TextField(
                 controller: tab.addressController,
+                style: const TextStyle(color: BrowserTheme.ink),
                 focusNode: tab.addressFocusNode,
                 onSubmitted: _loadAddress,
                 decoration: const InputDecoration(
@@ -909,6 +1128,8 @@ class BrowserScreenState extends State<BrowserScreen>
           onPageStarted: (url) {
             final tab = _tabById(id);
             if (tab != null) {
+              _updateNavigationState(
+                  tab, () => tab.navigation.pageStarted(url));
               _captureDiagnosticsTransition(tab, url);
               tab.revokeSigningDocument();
             }
@@ -917,6 +1138,10 @@ class BrowserScreenState extends State<BrowserScreen>
             if (error.isForMainFrame == true) {
               final tab = _tabById(id);
               if (tab != null) {
+                _updateNavigationState(
+                  tab,
+                  () => tab.navigation.pageFailed(error.url),
+                );
                 _recordWebViewDiagnostic(tab, error);
               }
             }
@@ -941,13 +1166,23 @@ class BrowserScreenState extends State<BrowserScreen>
   }
 
   Future<bool> _configureNativeChannels(BrowserTab tab) async {
-    if (!Platform.isAndroid) return Platform.isIOS || Platform.isMacOS;
+    if (!Platform.isAndroid) {
+      final controller = tab.controller.platform;
+      if (controller is WebKitWebViewController &&
+          (Platform.isIOS || Platform.isMacOS)) {
+        tab.nativeWebViewIdentifier = controller.webViewIdentifier;
+        await controller.addMainFrameJavaScriptAtDocumentStart(
+            nstackDocumentStartBootstrapScript);
+      }
+      return Platform.isIOS || Platform.isMacOS;
+    }
     final controller = tab.controller.platform;
     if (controller is! AndroidWebViewController) return false;
     final id = controller.webViewIdentifier;
-    tab.androidWebViewIdentifier = id;
+    tab.nativeWebViewIdentifier = id;
     final installed = await GraspAndroidChannel.install(
       webViewIdentifier: id,
+      documentStartScript: nstackDocumentStartBootstrapScript,
       onMessage: (channel, message) {
         if (!mounted || _tabById(tab.id) != tab) return;
         switch (channel) {
@@ -963,6 +1198,7 @@ class BrowserScreenState extends State<BrowserScreen>
       await GraspAndroidChannel.remove(id);
       return false;
     }
+    await _downloadCoordinator.installAndroid(id);
     return installed;
   }
 
@@ -1386,12 +1622,22 @@ class BrowserScreenState extends State<BrowserScreen>
   void _reload() {
     final tab = _activeTab;
     if (tab.isHome) {
+      tab.navigation.beginRequested('https://wingman.local/');
+      setState(() {});
       _loadHomeForTab(tab);
       return;
     }
     final uri = Uri.tryParse(tab.currentUrl ?? tab.addressController.text);
     if (uri != null && uri.hasScheme && uri.host.isNotEmpty) {
-      tab.controller.reload();
+      final requestId = tab.navigation.beginRequested(uri.toString());
+      setState(() {});
+      unawaited(tab.controller.reload().catchError((Object _) {
+        if (!mounted || tab.disposed) return;
+        _updateNavigationState(
+          tab,
+          () => tab.navigation.requestFailed(requestId),
+        );
+      }));
     } else {
       _loadAddress(tab.addressController.text);
     }
@@ -1494,12 +1740,13 @@ class BrowserScreenState extends State<BrowserScreen>
     unawaited(tab.nativeChannelsReady.then<void>((_) async {
       if (!mounted || tab.disposed || tab.signerDocumentEpoch != epoch) return;
       final html = _homePageHtml(savedBookmarks: _visibleBookmarks);
-      final nativeId = tab.androidWebViewIdentifier;
-      if (nativeId != null) {
+      final nativeId = tab.nativeWebViewIdentifier;
+      if (useAndroidHomeHtmlLoader(
+          isAndroid: Platform.isAndroid, nativeWebViewIdentifier: nativeId)) {
         // Keep Android's native current URL and document origin aligned for
         // local home actions, without weakening frame checks for web pages.
         await GraspAndroidChannel.loadHomeHtml(
-            webViewIdentifier: nativeId, html: html);
+            webViewIdentifier: nativeId!, html: html);
       } else {
         await tab.controller
             .loadHtmlString(html, baseUrl: 'https://wingman.local/');
@@ -1634,6 +1881,14 @@ class BrowserScreenState extends State<BrowserScreen>
     int tabId,
     NavigationRequest request,
   ) async {
+    if (request.isMainFrame &&
+        BrowserDownloadPolicy.isDirectFileUrl(request.url)) {
+      final accepted = await _downloadCoordinator.start(BrowserDownloadRequest(
+        url: request.url,
+        signal: BrowserDownloadSignal.directLink,
+      ));
+      if (accepted) return NavigationDecision.prevent;
+    }
     if (request.isMainFrame) {
       final tab = _tabById(tabId);
       if (tab != null) {
@@ -1667,6 +1922,78 @@ class BrowserScreenState extends State<BrowserScreen>
       }
     }
     return NavigationDecision.prevent;
+  }
+
+  void _onDownloadStarted(String filename) {
+    if (!mounted) return;
+    _downloadProgress[filename] = -1;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(
+      duration: const Duration(days: 1),
+      content: Text('Downloading $filename…'),
+      action: SnackBarAction(
+        label: 'Cancel',
+        onPressed: _downloadCoordinator.cancelAll,
+      ),
+    ));
+  }
+
+  void _onDownloadProgress(String filename, BrowserDownloadProgress progress) {
+    if (!mounted) return;
+    final fraction = progress.fraction;
+    if (fraction == null) return;
+    final percent = (fraction * 100).clamp(0, 100).floor();
+    final step = percent ~/ 10;
+    if (_downloadProgress[filename] == step) return;
+    _downloadProgress[filename] = step;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(
+      duration: const Duration(days: 1),
+      content: Text('Downloading $filename… $percent%'),
+      action: SnackBarAction(
+        label: 'Cancel',
+        onPressed: _downloadCoordinator.cancelAll,
+      ),
+    ));
+  }
+
+  void _onDownloadCompleted(BrowserDownloadResult result) {
+    if (!mounted) return;
+    _downloadProgress.remove(result.filename);
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(
+      content: Text('${result.filename} saved to ${result.destination}.'),
+    ));
+  }
+
+  void _onDownloadCancelled(String filename) {
+    if (!mounted) return;
+    _downloadProgress.remove(filename);
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+        SnackBar(content: Text('Download cancelled: $filename.')));
+  }
+
+  void _onDownloadFailed(String filename, Object error) {
+    if (!mounted) return;
+    _downloadProgress.remove(filename);
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(
+      content:
+          Text('Could not download $filename: ${_downloadErrorMessage(error)}'),
+    ));
+  }
+
+  String _downloadErrorMessage(Object error) {
+    if (error is HttpException) return error.message;
+    if (error is StateError) return error.message;
+    if (error is FormatException) return error.message;
+    return 'Please try again.';
   }
 
   bool _isFipsAppUrl(String url) {
@@ -1708,6 +2035,7 @@ class BrowserScreenState extends State<BrowserScreen>
   Future<void> _onPageFinished(int tabId, String url) async {
     final tab = _tabById(tabId);
     if (tab == null) return;
+    _updateNavigationState(tab, () => tab.navigation.pageFinished(url));
     tab.clearDiagnosticsTransition();
     if (tab.isHome &&
         (url == 'about:blank' || url == 'https://wingman.local/')) {
@@ -1728,6 +2056,8 @@ class BrowserScreenState extends State<BrowserScreen>
       tab.addressController.text = url;
       tab.title = _resolvedPageTitle(title, url);
     });
+    await _captureTabPreview(tab);
+    if (!currentDocument()) return;
     await _refreshNavigationState(tab);
     if (!currentDocument()) return;
     await _applyFlightDeckDisplayDefaults(tab, url);
@@ -1747,6 +2077,28 @@ class BrowserScreenState extends State<BrowserScreen>
     }
     _schedulePersistTabs();
     if (tab.id == _activeTabId) _notifyBookmarkMenuState();
+  }
+
+  Future<void> _captureTabPreview(BrowserTab tab) async {
+    if (tab.id != _activeTabId || tab.disposed) return;
+    final identifier = tab.nativeWebViewIdentifier;
+    if (identifier == null) return;
+    final epoch = tab.signerDocumentEpoch;
+    final bytes = await BrowserSnapshot.capture(identifier);
+    if (!mounted ||
+        tab.disposed ||
+        _tabById(tab.id) != tab ||
+        tab.signerDocumentEpoch != epoch ||
+        bytes == null) {
+      return;
+    }
+    setState(() => tab.previewBytes = bytes);
+  }
+
+  void _updateNavigationState(BrowserTab tab, VoidCallback update) {
+    final wasLoading = tab.navigation.isLoading;
+    update();
+    if (mounted && wasLoading != tab.navigation.isLoading) setState(() {});
   }
 
   String _resolvedPageTitle(String? title, String url) {
@@ -2174,101 +2526,22 @@ class BrowserScreenState extends State<BrowserScreen>
             stackId: stackId,
           );
           break;
-        case 'nstack.requestCapabilities':
+        case 'nstack.getConnection':
           final stackId = params['stackId']?.toString() ?? '';
-          final workspaceId = params['workspaceId']?.toString();
-          final rawCapabilities = params['capabilities'];
-          if (stackId.isEmpty || rawCapabilities is! List) {
+          final workspaceId = params['workspaceId']?.toString() ?? '';
+          if (stackId.isEmpty || workspaceId.isEmpty) {
             throw const NStackException(
-                'invalid_request', 'stackId and capabilities are required.');
+                'invalid_request', 'stackId and workspaceId are required.');
           }
-          final capabilities = rawCapabilities
-              .map((value) => value.toString())
-              .toList(growable: false);
-          final durationSeconds = params['duration'] is num
-              ? (params['duration'] as num).toInt()
-              : 900;
-          final unsupported = capabilities
-              .where((value) => !nstackSupportedCapabilities.contains(value))
-              .toList();
-          if (unsupported.isNotEmpty) {
-            throw NStackException('unsupported_capability',
-                'Unsupported capability: ${unsupported.first}.');
-          }
-          if (capabilities.isEmpty ||
-              durationSeconds <= 0 ||
-              durationSeconds > const Duration(hours: 8).inSeconds) {
-            throw const NStackException(
-                'invalid_request', 'Capabilities or duration are invalid.');
-          }
-          final disclosed =
-              await _nstackAccessService.listNStacks(identity, origin);
-          if (!disclosed.any((stack) => stack['id'] == stackId)) {
-            throw const NStackException(
-                'not_disclosed', 'The NStack was not disclosed.');
-          }
-          if (workspaceId != null && workspaceId.isNotEmpty) {
-            final disclosedWorkspaces =
-                await _nstackAccessService.listWorkspaces(
-              identity: identity,
-              origin: origin,
-              stackId: stackId,
-            );
-            if (!disclosedWorkspaces
-                .any((workspace) => workspace['id'] == workspaceId)) {
-              throw const NStackException(
-                  'not_disclosed', 'The workspace was not disclosed.');
-            }
-          }
-          if (!current()) return;
-          if (!mounted) return;
-          final approved = await showDialog<bool>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('Grant NStack capabilities?'),
-                  content: Text(
-                    '$origin requests:\n\n${capabilities.join('\n')}\n\n'
-                    'This creates a handle for this document only. It does not expose credentials or reusable signatures.',
-                  ),
-                  actions: [
-                    TextButton(
-                        onPressed: () => Navigator.pop(context, false),
-                        child: const Text('Deny')),
-                    FilledButton(
-                        onPressed: () => Navigator.pop(context, true),
-                        child: const Text('Allow once')),
-                  ],
-                ),
-              ) ??
-              false;
-          if (!current()) return;
-          if (!approved) {
-            throw const NStackException(
-                'consent_denied', 'Capability request was denied.');
-          }
-          result = await _nstackAccessService.createHandle(
-            documentId: documentId,
+          result = await _nstackAccessService.getConnection(
             identity: identity,
             origin: origin,
             stackId: stackId,
-            workspaceId:
-                workspaceId == null || workspaceId.isEmpty ? null : workspaceId,
-            capabilities: capabilities,
-            duration: Duration(seconds: durationSeconds),
+            workspaceId: workspaceId,
           );
           break;
         case 'nstack.revoke':
-          final handle = params['handle']?.toString() ?? '';
-          if (handle.isEmpty) {
-            throw const NStackException(
-                'invalid_request', 'handle is required.');
-          }
-          _nstackAccessService.revokeHandle(
-            documentId: documentId,
-            identity: identity,
-            origin: origin,
-            handle: handle,
-          );
+          await _nstackAccessService.revokeOrigin(identity, origin);
           result = true;
           break;
         default:
@@ -3924,6 +4197,238 @@ class BrowserScreenState extends State<BrowserScreen>
   }
 }
 
+class BrowserTabCountButton extends StatelessWidget {
+  const BrowserTabCountButton({
+    required this.count,
+    required this.onPressed,
+    super.key,
+  });
+
+  final int count;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: colors.onSurface,
+        disabledForegroundColor: colors.onSurfaceVariant,
+        side: BorderSide(color: colors.onSurfaceVariant),
+        minimumSize: const Size(48, 40),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      child: Text(
+        '$count',
+        semanticsLabel: '$count open ${count == 1 ? 'tab' : 'tabs'}',
+      ),
+    );
+  }
+}
+
+class _BrowserLoadingIndicator extends StatelessWidget {
+  const _BrowserLoadingIndicator({required this.size, super.key});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final reducedMotion = MediaQuery.disableAnimationsOf(context);
+    return Semantics(
+      label: 'Page loading',
+      liveRegion: true,
+      child: SizedBox.square(
+        dimension: size,
+        child: reducedMotion
+            ? Icon(Icons.sync, size: size)
+            : TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0, end: 1),
+                duration: const Duration(milliseconds: 600),
+                builder: (context, turns, child) => Transform.rotate(
+                  angle: turns * 2 * 3.141592653589793,
+                  child: child,
+                ),
+                child: Icon(Icons.sync, size: size),
+              ),
+      ),
+    );
+  }
+}
+
+class _MobileTabOverviewCard extends StatelessWidget {
+  const _MobileTabOverviewCard({
+    required this.title,
+    required this.url,
+    required this.active,
+    required this.isHome,
+    required this.isFips,
+    required this.loading,
+    required this.previewBytes,
+    required this.onSelect,
+    required this.onClose,
+    super.key,
+  });
+
+  final String title;
+  final String url;
+  final bool active;
+  final bool isHome;
+  final bool isFips;
+  final bool loading;
+  final Uint8List? previewBytes;
+  final VoidCallback onSelect;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final uri = Uri.tryParse(url);
+    final identity = uri?.host.isNotEmpty == true ? uri!.host : url;
+    final fallback = identity.trim().isEmpty ? 'New tab' : identity;
+    return Semantics(
+      button: true,
+      selected: active,
+      label: active ? '$title, active tab' : title,
+      child: Material(
+        color: colors.surfaceContainerLow,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(
+            color: active ? colors.primary : colors.outlineVariant,
+            width: active ? 3 : 1,
+          ),
+        ),
+        child: InkWell(
+          onTap: onSelect,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: ColoredBox(
+                  color: colors.surfaceContainerHighest,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      if (previewBytes != null)
+                        Image.memory(
+                          previewBytes!,
+                          fit: BoxFit.cover,
+                          gaplessPlayback: true,
+                          errorBuilder: (context, error, stackTrace) =>
+                              _MobileTabPreviewFallback(
+                            isHome: isHome,
+                            isFips: isFips,
+                            label: fallback,
+                          ),
+                        )
+                      else
+                        _MobileTabPreviewFallback(
+                          isHome: isHome,
+                          isFips: isFips,
+                          label: fallback,
+                        ),
+                      if (loading)
+                        const Positioned(
+                          left: 12,
+                          top: 12,
+                          child: _BrowserLoadingIndicator(size: 18),
+                        ),
+                      Positioned(
+                        right: 4,
+                        top: 4,
+                        child: IconButton.filledTonal(
+                          tooltip: 'Close $title',
+                          onPressed: onClose,
+                          icon: const Icon(Icons.close),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: active ? FontWeight.w700 : null,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      fallback,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MobileTabPreviewFallback extends StatelessWidget {
+  const _MobileTabPreviewFallback({
+    required this.isHome,
+    required this.isFips,
+    required this.label,
+  });
+
+  final bool isHome;
+  final bool isFips;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isHome
+                ? Icons.home_outlined
+                : isFips
+                    ? Icons.hub_outlined
+                    : Icons.public,
+            size: 42,
+            color: colors.onSurfaceVariant,
+          ),
+          const SizedBox(height: 10),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _TabReorderHandle extends StatelessWidget {
   const _TabReorderHandle({
     required this.index,
@@ -3966,6 +4471,7 @@ class _BrowserTabButton extends StatelessWidget {
   const _BrowserTabButton({
     required this.title,
     required this.active,
+    required this.loading,
     required this.fipsTransport,
     required this.closeable,
     required this.onPressed,
@@ -3977,6 +4483,7 @@ class _BrowserTabButton extends StatelessWidget {
 
   final String title;
   final bool active;
+  final bool loading;
   final bool fipsTransport;
   final bool closeable;
   final VoidCallback onPressed;
@@ -3993,10 +4500,12 @@ class _BrowserTabButton extends StatelessWidget {
       padding: const EdgeInsets.only(top: 6),
       child: Material(
         color: tabColour == null
-            ? (active ? colors.surface : Colors.transparent)
+            ? (active ? BrowserTheme.activeTab : Colors.transparent)
             : Color.alphaBlend(
                 tabColour!.withValues(alpha: active ? 0.28 : 0.14),
-                active ? colors.surface : colors.surfaceContainerHighest,
+                active
+                    ? BrowserTheme.activeTab
+                    : colors.surfaceContainerHighest,
               ),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
         child: InkWell(
@@ -4008,30 +4517,39 @@ class _BrowserTabButton extends StatelessWidget {
             height: 34,
             padding: const EdgeInsets.only(left: 12, right: 4),
             decoration: BoxDecoration(
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(6),
-              ),
-              border: Border.all(
-                color: tabColour ??
-                    (active ? colors.outlineVariant : Colors.transparent),
-                width: active && tabColour != null ? 2 : 1,
+              border: Border(
+                top: BorderSide(
+                  color: active
+                      ? BrowserTheme.orange
+                      : (tabColour ?? Colors.transparent),
+                  width: active ? 3 : 1,
+                ),
+                bottom: BorderSide(
+                  color: tabColour ??
+                      (active ? colors.outlineVariant : Colors.transparent),
+                  width: active && tabColour != null ? 2 : 1,
+                ),
               ),
             ),
             child: Row(
               children: [
-                Tooltip(
-                  message: fipsTransport
-                      ? 'Encrypted FIPS mesh transport'
-                      : 'Web transport',
-                  child: Icon(
-                    fipsTransport ? Icons.hub_outlined : Icons.public,
-                    key: fipsTransport
-                        ? const ValueKey('fips-transport-indicator')
-                        : null,
-                    size: 16,
-                    color: active ? colors.onSurface : colors.onSurfaceVariant,
+                if (loading)
+                  const _BrowserLoadingIndicator(size: 16)
+                else
+                  Tooltip(
+                    message: fipsTransport
+                        ? 'Encrypted FIPS mesh transport'
+                        : 'Web transport',
+                    child: Icon(
+                      fipsTransport ? Icons.hub_outlined : Icons.public,
+                      key: fipsTransport
+                          ? const ValueKey('fips-transport-indicator')
+                          : null,
+                      size: 16,
+                      color:
+                          active ? colors.onSurface : colors.onSurfaceVariant,
+                    ),
                   ),
-                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -4677,6 +5195,8 @@ class BrowserTab {
   String? currentUrl;
   String? message;
   String? fipsDisabledUrl;
+  Uint8List? previewBytes;
+  final BrowserNavigationState navigation = BrowserNavigationState();
   bool isHome;
   GraspFipsBrowserBridge? graspBridge;
   String? signerDocumentToken;
@@ -4706,7 +5226,7 @@ class BrowserTab {
 
   bool meshAuthPending = false;
   Future<bool> nativeChannelsReady = Future.value(false);
-  int? androidWebViewIdentifier;
+  int? nativeWebViewIdentifier;
   bool disposed = false;
 
   void revokeSigningDocument() {
@@ -4753,7 +5273,7 @@ class BrowserTab {
     disposed = true;
     clearDiagnosticsTransition();
     revokeSigningDocument();
-    final nativeId = androidWebViewIdentifier;
+    final nativeId = nativeWebViewIdentifier;
     if (nativeId != null) unawaited(GraspAndroidChannel.remove(nativeId));
     addressController.dispose();
     addressFocusNode.dispose();

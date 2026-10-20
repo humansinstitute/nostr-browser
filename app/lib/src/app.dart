@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'theme/browser_theme.dart';
 import 'core/app_config.dart';
 import 'core/flight_deck_update_manager.dart';
 import 'core/native_core_bridge.dart';
@@ -14,6 +15,7 @@ import 'features/browser/relay_diagnostics.dart';
 import 'features/browser/signer_store.dart';
 import 'features/shell/shell_home.dart';
 import 'features/onboarding/signer_onboarding_screen.dart';
+import 'features/onboarding/welcome_surface.dart';
 
 class WingmanApp extends StatefulWidget {
   const WingmanApp({
@@ -176,23 +178,14 @@ class _WingmanAppState extends State<WingmanApp> {
     return MaterialApp(
       title: 'Nostr Browser',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF286A5A),
-          brightness: Brightness.light,
-        ),
-        useMaterial3: true,
-        visualDensity: VisualDensity.standard,
-      ),
+      theme: BrowserTheme.light(),
       home: _home(),
     );
   }
 
   Widget _home() {
     if (_checkingVault) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const WelcomeLoadingScreen();
     }
     if (_startupVault != null) {
       return SignerOnboardingScreen(

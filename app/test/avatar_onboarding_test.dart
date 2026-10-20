@@ -1,3 +1,5 @@
+import 'pin_input_test_helpers.dart';
+import 'package:wingman_app/src/widgets/immediate_pin_field.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -56,8 +58,9 @@ void main() {
         InMemorySharedPreferencesAsync.empty();
     installFakeWebViewPlatform();
   });
-  Finder field(String label) => find.byWidgetPredicate(
-      (widget) => widget is TextField && widget.decoration?.labelText == label);
+  Finder field(String label) => find.byWidgetPredicate((widget) =>
+      (widget is TextField && widget.decoration?.labelText == label) ||
+      (widget is ImmediatePinField && widget.decoration.labelText == label));
   Future<void> openAvatar(WidgetTester tester, String action) async {
     await tester.tap(find.byTooltip('Profile'));
     await tester.pumpAndSettle();
@@ -119,7 +122,7 @@ void main() {
     expect(find.byType(BrowserScreen), findsNothing);
     expect(fakeWebViewControllerCreationCount, 0);
     expect(await prefs.getString(tabsKey), snapshot);
-    await tester.enterText(field('PIN'), '1234');
+    await enterEditorText(tester, field('PIN'), '1234');
     await submit(tester, 'Unlock', vault);
     expect(fakeLoadedRequestUrls,
         containsAll(['https://deck.test', 'https://other.test']));
@@ -150,7 +153,7 @@ void main() {
       expect(fakeExecutedJavaScripts.last, contains('Signer is locked'));
     }
     await openAvatar(tester, 'Unlock identity');
-    await tester.enterText(field('PIN'), '1234');
+    await enterEditorText(tester, field('PIN'), '1234');
     await submit(tester, 'Unlock', vault);
     expect(fakeWebViewControllerCreationCount, controllers);
     expect(fakeReloadCalls, 2);
@@ -185,8 +188,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(await vault.loadRecord(), isNull);
       await openAvatar(tester, 'Create identity / Import key');
-      await tester.enterText(field('PIN'), '1234');
-      await tester.enterText(field('Confirm PIN'), '1234');
+      await enterEditorText(tester, field('PIN'), '1234');
+      await enterEditorText(tester, field('Confirm PIN'), '1234');
       await submit(tester, 'Create and encrypt identity', vault);
       final record = await vault.loadRecord();
       expect(record, isNotNull);
@@ -203,7 +206,7 @@ void main() {
               tester.getTopLeft(find.text('Edit profile')).dy,
           lessThan(620));
       relays.accept = true;
-      await tester.enterText(field('Display name'), 'New User');
+      await enterEditorText(tester, field('Display name'), 'New User');
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
       expect((await NostrProfileStore().load(record.npub)).displayName,
@@ -219,7 +222,7 @@ void main() {
       await tester.tap(find.text('Cancel'));
       await tester.pumpAndSettle();
       expect((await vault.loadRecord())!.npub, record.npub);
-      await tester.enterText(field('PIN'), '1234');
+      await enterEditorText(tester, field('PIN'), '1234');
       await submit(tester, 'Unlock', vault);
       await tester.tap(find.byTooltip('Profile'));
       await tester.pumpAndSettle();
@@ -242,10 +245,10 @@ void main() {
     await openAvatar(tester, 'Create identity / Import key');
     await tester.tap(find.text('Import key'));
     await tester.pumpAndSettle();
-    await tester.enterText(
-        field('Nostr private key'), 'nsec-private-invalid-input');
-    await tester.enterText(field('PIN'), '1234');
-    await tester.enterText(field('Confirm PIN'), '1234');
+    await enterEditorText(
+        tester, field('Nostr private key'), 'nsec-private-invalid-input');
+    await enterEditorText(tester, field('PIN'), '1234');
+    await enterEditorText(tester, field('Confirm PIN'), '1234');
     // The error is handled by the screen; consume the same failing future here.
     await tester.runAsync(() async {
       await tester.tap(find.text('Encrypt and Continue'));
@@ -257,7 +260,7 @@ void main() {
     expect(find.textContaining('Unable to open the signer'), findsOneWidget);
     expect(await vault.loadRecord(), isNull);
     final identity = NostrCrypto.importIdentity('3'.padLeft(64, '0'));
-    await tester.enterText(field('Nostr private key'), identity.nsec);
+    await enterEditorText(tester, field('Nostr private key'), identity.nsec);
     await submit(tester, 'Encrypt and Continue', vault);
     expect((await vault.loadRecord())!.npub, identity.npub);
     expect(find.text('Edit profile'), findsOneWidget);
@@ -287,7 +290,7 @@ void main() {
     ))));
     await tester.pumpAndSettle();
     await openAvatar(tester, 'Edit profile');
-    await tester.enterText(field('Display name'), 'Local draft');
+    await enterEditorText(tester, field('Display name'), 'Local draft');
     relays.refresh.complete(const NostrProfileRelayResult(
         profile: NostrProfile(displayName: 'Stale remote'), createdAt: 100));
     await tester.pumpAndSettle();
@@ -306,7 +309,7 @@ void main() {
     await openAvatar(tester, 'Edit profile');
     expect(tester.widget<TextField>(field('Display name')).controller!.text,
         'Local draft');
-    await tester.enterText(field('Display name'), 'Cancelled edit');
+    await enterEditorText(tester, field('Display name'), 'Cancelled edit');
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     expect((await NostrProfileStore().load(identity.npub)).displayName,

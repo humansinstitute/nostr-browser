@@ -318,7 +318,6 @@ class NativeCoreBridge {
       '${Directory.current.path}/..',
       '${Directory.current.path}/../..',
       '${Platform.environment['HOME'] ?? ''}/code/nbrowser',
-      '${Platform.environment['HOME'] ?? ''}/code/wm/wmapp',
       '${Platform.environment['HOME'] ?? ''}/code/wingmanbefree/wm-app',
       '${Platform.environment['HOME'] ?? ''}/wm-app',
     ];

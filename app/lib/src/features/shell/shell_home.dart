@@ -12,6 +12,7 @@ import '../drive/drive_screen.dart';
 import '../onboarding/signer_onboarding_screen.dart';
 import '../nstack/nstack_access.dart';
 import '../nstack/nstack_discovery.dart';
+import '../nstack/nstack_workspace_discovery.dart';
 import '../nstack/nstack_recovery.dart';
 import '../nstack/nstack_screen.dart';
 import '../nstack/nstack_store.dart';
@@ -77,6 +78,8 @@ class _ShellHomeState extends State<ShellHome> {
   );
   late final NStackDiscoveryService _nstackDiscoveryService =
       NStackDiscoveryService(registryStore: _nstackRegistryStore);
+  late final NStackWorkspaceDiscoveryService _nstackWorkspaceDiscoveryService =
+      NStackWorkspaceDiscoveryService(registryStore: _nstackRegistryStore);
   late final NStackRecoveryService _nstackRecoveryService =
       NStackRecoveryService(
     registryStore: _nstackRegistryStore,
@@ -128,7 +131,8 @@ class _ShellHomeState extends State<ShellHome> {
               registryStore: _nstackRegistryStore,
               grantStore: _nstackGrantStore,
               accessService: _nstackAccessService,
-              discoveryService: _nstackDiscoveryService,
+              discoveryService: _nstackWorkspaceDiscoveryService,
+              catalogueDiscoveryService: _nstackDiscoveryService,
               recoveryService: _nstackRecoveryService,
               onRegistryChanged: () {
                 _nstackAccessService.revokeIdentity(widget.config.deviceNpub);

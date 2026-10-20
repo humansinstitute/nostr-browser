@@ -10,6 +10,7 @@ abstract final class GraspAndroidChannel {
   static Future<bool> install({
     required int webViewIdentifier,
     required void Function(String channel, String message) onMessage,
+    String? documentStartScript,
   }) async {
     if (!_listening) {
       _channel.setMethodCallHandler((call) async {
@@ -28,6 +29,8 @@ abstract final class GraspAndroidChannel {
     try {
       final supported = await _channel.invokeMethod<bool>('install', {
             'webViewIdentifier': webViewIdentifier,
+            if (documentStartScript != null)
+              'documentStartScript': documentStartScript,
           }) ??
           false;
       if (!supported && identical(_receivers[webViewIdentifier], onMessage)) {

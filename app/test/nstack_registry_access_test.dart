@@ -45,7 +45,58 @@ void main() {
         reason: 'migration must retain the legacy record byte-for-byte');
   });
 
-  test('opaque discovery is origin scoped and capability handles are documents',
+  test(
+      'legacy host migrates once only when exactly one workspace is accessible',
+      () async {
+    const identity = 'npub-legacy-one';
+    final legacy = NStackRegistry(
+      revision: 4,
+      hostStackId: 'legacy-host',
+      stacks: [_backupStack('legacy-host', 'workspace-a', _workspaceA)],
+    );
+    SharedPreferencesAsyncPlatform.instance =
+        InMemorySharedPreferencesAsync.withData({
+      '${NStackRegistryStore.keyPrefix}$identity': jsonEncode(legacy.toJson()),
+    });
+    final migrated = await NStackRegistryStore().load(identity);
+    expect(migrated.backupDestination?.stackId, 'legacy-host');
+    expect(migrated.backupDestination?.workspaceRemoteId, _workspaceA);
+    expect(migrated.backupDestinationMigrationVersion, 1);
+  });
+
+  test('ambiguous legacy host requires selection and is never retried silently',
+      () async {
+    const identity = 'npub-legacy-many';
+    final stack = _backupStack('legacy-host', 'workspace-a', _workspaceA,
+        extraWorkspace: const NStackWorkspace(
+          id: 'workspace-b',
+          name: 'Second',
+          remoteId: _workspaceB,
+          stableRemoteId: _workspaceB,
+          workspaceOwnerNpub: _npub,
+          workspaceServiceNpub: _npub,
+          directHttpsUrl: 'https://tower.example',
+          membershipRole: 'member',
+        ));
+    final legacy = NStackRegistry(
+        revision: 2, hostStackId: 'legacy-host', stacks: [stack]);
+    SharedPreferencesAsyncPlatform.instance =
+        InMemorySharedPreferencesAsync.withData({
+      '${NStackRegistryStore.keyPrefix}$identity': jsonEncode(legacy.toJson()),
+    });
+    final store = NStackRegistryStore();
+    final migrated = await store.load(identity);
+    expect(migrated.backupDestination, isNull);
+    expect(migrated.backupDestinationMigrationVersion, 1);
+    await store.addOrUpdate(
+      identity,
+      _backupStack('legacy-host', 'workspace-a', _workspaceA),
+    );
+    expect((await store.load(identity)).backupDestination, isNull,
+        reason: 'a later single workspace must not become an implicit choice');
+  });
+
+  test('origin consent exposes aliases and safe connection descriptors only',
       () async {
     const identity = 'npub-identity';
     final registry = NStackRegistryStore();
@@ -80,48 +131,33 @@ void main() {
       stackId: a['id'] as String,
     ))
         .single;
-    final handle = await service.createHandle(
-      documentId: 'document-a',
+    final connection = await service.getConnection(
       identity: identity,
       origin: 'https://app-a.example',
       stackId: a['id'] as String,
       workspaceId: workspace['id'] as String,
-      capabilities: const ['workspace.read', 'storage.read'],
     );
-    expect(handle['handle'], isNotEmpty);
-    expect((handle['connection'] as Map)['url'], 'https://host.example');
+    expect(connection['workspaceId'], 'workspace-1');
+    expect(connection['workspaceOwnerNpub'], _npub);
+    expect(connection['directHttpsUrl'], 'https://tower.example');
+    expect(connection, isNot(contains('stableRemoteId')));
+    expect(connection, isNot(contains('stable_remote_id')));
+    expect(connection, isNot(contains('handle')));
+    expect(connection, isNot(contains('capabilities')));
     service.revokeDocument('document-a');
-    expect(service.activeHandles, isEmpty);
-    expect(
-      () => service.revokeHandle(
-        documentId: 'document-a',
-        identity: identity,
-        origin: 'https://app-a.example',
-        handle: handle['handle'] as String,
-      ),
-      throwsA(isA<NStackException>()
-          .having((error) => error.code, 'code', 'stale_handle')),
-    );
-    final replacement = await service.createHandle(
-      documentId: 'document-b',
-      identity: identity,
-      origin: 'https://app-a.example',
-      stackId: a['id'] as String,
-      capabilities: const ['events.read'],
-    );
-    expect(replacement['handle'], isNotEmpty);
-    service.revokeIdentity(identity);
-    expect(service.activeHandles, isEmpty,
-        reason: 'identity/lock lifecycle must revoke document handles');
   });
 
-  test('listing before consent and unsupported capability fail closed',
-      () async {
+  test('listing before consent and revoked origin fail closed', () async {
     const identity = 'npub-identity';
     final registry = NStackRegistryStore();
     await registry.addOrUpdate(identity, _stack('internal-a', 'Host'));
     final service = NStackAccessService(
         registryStore: registry, grantStore: NStackGrantStore());
+    expect(
+      () => service.listNStacks('', 'https://app.example'),
+      throwsA(isA<NStackException>()
+          .having((error) => error.code, 'code', 'locked')),
+    );
     expect(
       () => service.applyDiscoveryDecision(
         identity: identity,
@@ -138,101 +174,17 @@ void main() {
       throwsA(isA<NStackException>()
           .having((error) => error.code, 'code', 'not_disclosed')),
     );
-    expect(
-      () => service.getServiceCatalogue(
-        identity: identity,
-        origin: 'https://app.example',
-        stackId: 'anything',
-      ),
-      throwsA(isA<NStackException>()
-          .having((error) => error.code, 'code', 'not_disclosed')),
-    );
     await service.disclose(
       identity: identity,
       origin: 'https://app.example',
       stackInternalIds: const ['internal-a'],
       includeWorkspaces: false,
-    );
-    final stackId = (await service.listNStacks(identity, 'https://app.example'))
-        .single['id'] as String;
-    final catalogue = await service.getServiceCatalogue(
-      identity: identity,
-      origin: 'https://app.example',
-      stackId: stackId,
-    );
-    expect(catalogue['stackId'], stackId);
-    expect(jsonEncode(catalogue), isNot(contains('internal-a')));
-    expect((catalogue['services'] as List).single['id'], 'tower');
-    expect(
-      () => service.createHandle(
-        documentId: 'doc',
-        identity: identity,
-        origin: 'https://app.example',
-        stackId: stackId,
-        capabilities: const ['administrator'],
-      ),
-      throwsA(isA<NStackException>()
-          .having((error) => error.code, 'code', 'unsupported_capability')),
     );
     await service.revokeOrigin(identity, 'https://app.example');
     expect(
       () => service.listNStacks(identity, 'https://app.example'),
       throwsA(isA<NStackException>()
           .having((error) => error.code, 'code', 'not_disclosed')),
-    );
-  });
-
-  test('unavailable or unadvertised Tower capability is rejected', () async {
-    const identity = 'npub-identity';
-    final registry = NStackRegistryStore();
-    final base = _stack('internal-a', 'Host');
-    final tower = base.catalogueStatus!.catalogue!.services.single;
-    await registry.addOrUpdate(
-      identity,
-      base.copyWith(
-        catalogueStatus: NStackCatalogueStatus(
-          checkedAt: DateTime.utc(2026, 10, 19),
-          catalogue: NStackServiceCatalogue(
-            generatedAt: DateTime.utc(2026, 10, 19),
-            fetchedAt: DateTime.utc(2026, 10, 19),
-            cacheTtlSeconds: 30,
-            services: [
-              NStackService(
-                id: tower.id,
-                kind: tower.kind,
-                endpoint: tower.endpoint,
-                version: tower.version,
-                protocols: tower.protocols,
-                capabilities: tower.capabilities,
-                availability: NStackServiceAvailability.unavailable,
-                checkedAt: tower.checkedAt,
-                actionable: true,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    final service = NStackAccessService(
-        registryStore: registry, grantStore: NStackGrantStore());
-    await service.disclose(
-      identity: identity,
-      origin: 'https://app.example',
-      stackInternalIds: const ['internal-a'],
-      includeWorkspaces: false,
-    );
-    final alias = (await service.listNStacks(identity, 'https://app.example'))
-        .single['id'] as String;
-    expect(
-      () => service.createHandle(
-        documentId: 'doc',
-        identity: identity,
-        origin: 'https://app.example',
-        stackId: alias,
-        capabilities: const ['workspace.read'],
-      ),
-      throwsA(isA<NStackException>()
-          .having((error) => error.code, 'code', 'stack_unavailable')),
     );
   });
 
@@ -244,49 +196,85 @@ void main() {
       'listNStacks',
       'getServiceCatalogue',
       'listWorkspaces',
+      'getConnection',
       'requestCapabilities',
       'revoke',
     ]) {
       expect(script, contains(method));
     }
     expect(script, contains('version: 1'));
+    expect(script, contains('window !== window.top'));
+    expect(script, contains('location.origin'));
+    expect(script, contains('documentId'));
+    expect(script, contains('stale_handle'));
     expect(script, isNot(contains('fetch(')));
     expect(script, isNot(contains('WebSocket')));
     expect(script, isNot(contains('nsec')));
+    expect(nstackDocumentStartBootstrapScript, contains('NStackReady'));
+    expect(nstackDocumentStartBootstrapScript, contains('nstackready'));
+  });
+
+  test('deprecated capability method rejects locally without dispatch', () {
+    final provider = nstackBridgeScript(
+        documentId: 'document-secret', pageOrigin: 'https://app.example');
+
+    for (final script in [nstackDocumentStartBootstrapScript, provider]) {
+      expect(script, contains('requestCapabilities: rejectCapabilities'));
+      expect(script, contains("error.code = 'invalid_request'"));
+      expect(script, contains('NStack capabilities are not supported'));
+      expect(script, isNot(contains("callWhenReady('requestCapabilities'")));
+      expect(script, isNot(contains("call('requestCapabilities'")));
+      expect(script, isNot(contains('nstack.requestCapabilities')));
+    }
+    expect(provider, isNot(contains('createHandle')));
+    expect(provider, isNot(contains('capabilityHandle')));
   });
 }
+
+const _npub = 'npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqnp7z5';
 
 NStackEntry _stack(String id, String name) => NStackEntry(
       id: id,
       name: name,
       url: 'https://host.example',
-      catalogueStatus: NStackCatalogueStatus(
-        checkedAt: DateTime.utc(2026, 10, 19),
-        catalogue: NStackServiceCatalogue(
-          generatedAt: DateTime.utc(2026, 10, 19),
-          fetchedAt: DateTime.utc(2026, 10, 19),
-          cacheTtlSeconds: 30,
-          services: [
-            NStackService(
-              id: 'tower',
-              kind: 'tower',
-              endpoint: 'https://host.example',
-              version: '1.0.0',
-              protocols: const ['https', 'nip-98'],
-              capabilities: const [
-                'workspace.authenticated_discovery',
-                'records.sync',
-                'storage.private',
-              ],
-              availability: NStackServiceAvailability.available,
-              checkedAt: DateTime.utc(2026, 10, 19),
-              actionable: true,
-            ),
-          ],
-        ),
-      ),
       workspaces: const [
         NStackWorkspace(
-            id: 'workspace-internal', name: 'Main', remoteId: 'workspace-1'),
+          id: 'workspace-internal',
+          name: 'Main',
+          remoteId: 'workspace-1',
+          stableRemoteId: 'legacy-workspace-1',
+          workspaceOwnerNpub: _npub,
+          workspaceServiceNpub: _npub,
+          directHttpsUrl: 'https://tower.example',
+        ),
+      ],
+      workspaceDiscovery: NStackWorkspaceDiscoveryStatus(
+        lastAttemptAt: DateTime.utc(2026, 10, 19),
+        lastSuccessAt: DateTime.utc(2026, 10, 19),
+        stale: false,
+      ),
+    );
+
+const _workspaceA = '11111111-1111-4111-8111-111111111111';
+const _workspaceB = '22222222-2222-4222-8222-222222222222';
+
+NStackEntry _backupStack(String stackId, String workspaceId, String remoteId,
+        {NStackWorkspace? extraWorkspace}) =>
+    NStackEntry(
+      id: stackId,
+      name: 'Legacy host',
+      url: 'https://tower.example',
+      workspaces: [
+        NStackWorkspace(
+          id: workspaceId,
+          name: 'Main',
+          remoteId: remoteId,
+          stableRemoteId: remoteId,
+          workspaceOwnerNpub: _npub,
+          workspaceServiceNpub: _npub,
+          directHttpsUrl: 'https://tower.example',
+          membershipRole: 'owner',
+        ),
+        if (extraWorkspace != null) extraWorkspace,
       ],
     );

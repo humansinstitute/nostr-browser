@@ -5,7 +5,7 @@
 Build the debug APK from the repo root:
 
 ```bash
-cd ~/code/wm/wmapp
+cd ~/code/nbrowser
 git pull --ff-only
 ./build_android_apk.sh
 ```
@@ -33,7 +33,7 @@ On the tablet, Android may ask you to allow installs from the app you used to op
 Enable Developer Options and USB debugging on the tablet, connect it by USB, then:
 
 ```bash
-cd ~/code/wm/wmapp/app
+cd ~/code/nbrowser/app
 flutter devices
 flutter run -d <android-device-id>
 ```
@@ -163,7 +163,7 @@ Release builds use a durable keystore outside git. On the release Mac, create it
 once and store its randomly generated password in macOS Keychain:
 
 ```bash
-cd ~/code/wm/wmapp
+cd ~/code/nbrowser
 ./tools/setup_android_release_signing.sh
 ```
 
