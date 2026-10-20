@@ -76,7 +76,7 @@ android {
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = if (nightly) "com.wingmanbefree.wingman_app.nightly" else "com.wingmanbefree.wingman_app"
-        manifestPlaceholders["wingmanAppLabel"] = if (nightly) "NBrowser Nightly" else "NBrowser"
+        manifestPlaceholders["wingmanAppLabel"] = "Nostr Browser"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
