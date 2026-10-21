@@ -452,6 +452,15 @@ class WebKitWebViewController extends PlatformWebViewController {
   /// WMapp uses this for capability-presence bootstraps whose authority is
   /// still checked by Dart for every request. Call before the first load.
   Future<void> addMainFrameJavaScriptAtDocumentStart(String source) async {
+    await addJavaScriptAtDocumentStart(source, forMainFrameOnly: true);
+  }
+
+  /// Installs a script before page code, optionally in every frame (including
+  /// cross-origin frames). This does not grant a frame any service capability.
+  Future<void> addJavaScriptAtDocumentStart(
+    String source, {
+    required bool forMainFrameOnly,
+  }) async {
     if (source.isEmpty) {
       throw ArgumentError.value(source, 'source', 'must not be empty');
     }
@@ -461,7 +470,7 @@ class WebKitWebViewController extends PlatformWebViewController {
       WKUserScript(
         source: source,
         injectionTime: UserScriptInjectionTime.atDocumentStart,
-        isForMainFrameOnly: true,
+        isForMainFrameOnly: forMainFrameOnly,
       ),
     );
   }

@@ -20,6 +20,7 @@ import '../../core/native_core_bridge.dart';
 import '../../core/nostr_crypto.dart';
 import '../../core/signer_vault.dart';
 import 'embedded_content_focus.dart';
+import 'browser_keyboard_shortcuts.dart';
 import 'focus_edge_gestures.dart';
 import 'diagnostics_store.dart';
 import 'relay_diagnostics.dart';
@@ -1080,11 +1081,50 @@ class BrowserScreenState extends State<BrowserScreen>
 
   bool _handleKeyboardEvent(KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
-    if (event.logicalKey != LogicalKeyboardKey.tab) return false;
     final keyboard = HardwareKeyboard.instance;
+    if (keyboard.isMetaPressed &&
+        !keyboard.isControlPressed &&
+        !keyboard.isAltPressed &&
+        !keyboard.isShiftPressed &&
+        (event.logicalKey == LogicalKeyboardKey.arrowRight ||
+            event.logicalKey == LogicalKeyboardKey.arrowLeft)) {
+      final focusContext = FocusManager.instance.primaryFocus?.context;
+      // Native content handles its own events using the actual DOM focus.
+      // Flutter focus can otherwise remain stale while WebKit owns an editor.
+      if (focusContext?.findAncestorWidgetOfExactType<EmbeddedContentFocus>() !=
+              null ||
+          focusContext?.findAncestorStateOfType<EditableTextState>() != null ||
+          focusContext?.widget is EditableText ||
+          !_canUseNavigationShortcut) {
+        return false;
+      }
+      // One action per press; do not race repeated native/shell navigation.
+      if (event is KeyRepeatEvent) return true;
+      _runNavigationShortcut(event.logicalKey == LogicalKeyboardKey.arrowRight
+          ? 'nextApp'
+          : 'openMenu');
+      return true;
+    }
+    if (event.logicalKey != LogicalKeyboardKey.tab) return false;
     if (!keyboard.isControlPressed) return false;
     _activateAdjacentTab(keyboard.isShiftPressed ? -1 : 1);
     return true;
+  }
+
+  bool get _canUseNavigationShortcut =>
+      mounted &&
+      (ModalRoute.of(context)?.isCurrent ?? true) &&
+      !(Scaffold.maybeOf(context)?.isDrawerOpen ?? false) &&
+      !(Scaffold.maybeOf(context)?.isEndDrawerOpen ?? false);
+
+  void _runNavigationShortcut(String action) {
+    if (!_canUseNavigationShortcut) return;
+    switch (action) {
+      case 'nextApp':
+        _activateAdjacentTab(1);
+      case 'openMenu':
+        widget.onOpenDrawer();
+    }
   }
 
   void _activateAdjacentTab(int delta) {
@@ -1171,6 +1211,21 @@ class BrowserScreenState extends State<BrowserScreen>
       if (controller is WebKitWebViewController &&
           (Platform.isIOS || Platform.isMacOS)) {
         tab.nativeWebViewIdentifier = controller.webViewIdentifier;
+        await tab.controller.addJavaScriptChannel(
+          'WingmanNavigation',
+          onMessageReceived: (message) {
+            if (!mounted ||
+                tab.disposed ||
+                _activeTabId != tab.id ||
+                _tabById(tab.id) != tab) {
+              return;
+            }
+            _runNavigationShortcut(message.message);
+          },
+        );
+        await controller.addJavaScriptAtDocumentStart(
+            browserKeyboardShortcutsScript,
+            forMainFrameOnly: false);
         await controller.addMainFrameJavaScriptAtDocumentStart(
             nstackDocumentStartBootstrapScript);
       }
@@ -2786,7 +2841,7 @@ class BrowserScreenState extends State<BrowserScreen>
             'version': 1,
             'events': await _diagnosticsStore.snapshot(scope),
             'host': {
-              'version': '0.1.7+9',
+              'version': '0.1.7+10',
               'platform': Platform.operatingSystem
             },
             'recovered': tab.diagnosticsRecovered,
