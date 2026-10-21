@@ -67,7 +67,14 @@ class NStackRegistryStore extends ChangeNotifier {
     if (existing.first.url != expectedUrl) {
       throw StateError('NStack origin changed during service discovery.');
     }
-    final updated = existing.first.copyWith(catalogueStatus: status);
+    final pinned = existing.first.publicIdentity;
+    final reported = status.catalogue?.towerNpub;
+    if (pinned != null && reported != null && pinned != reported) {
+      throw StateError(
+          'NStack identity changed. Add it as a separate connection.');
+    }
+    final updated =
+        existing.first.copyWith(towerNpub: reported, catalogueStatus: status);
     await replaceAtomic(
       signerNpub,
       current.next(stacks: [
@@ -111,11 +118,34 @@ class NStackRegistryStore extends ChangeNotifier {
     final current = await load(signerNpub);
     final existing =
         current.stacks.where((stack) => stack.id == candidate.id).firstOrNull;
+    if (expectedPreviousUrl != null && existing == null) {
+      throw StateError('NStack was removed during discovery.');
+    }
     if (existing != null &&
         existing.url != (expectedPreviousUrl ?? candidate.url)) {
       throw StateError('NStack address changed during discovery.');
     }
-    final source = existing?.copyWith(url: candidate.url) ?? candidate;
+    final identities =
+        discovered.map((w) => w.serviceNpub).whereType<String>().toSet();
+    if (identities.length > 1) {
+      throw StateError('Discovery returned conflicting NStack identities.');
+    }
+    final reported = identities.firstOrNull;
+    final pinned = existing?.publicIdentity;
+    final changingAddress = existing != null && existing.url != candidate.url;
+    if ((pinned != null && reported != null && pinned != reported) ||
+        (changingAddress && (pinned == null || reported != pinned))) {
+      throw StateError(
+          'NStack identity could not be matched. Add it as a separate connection.');
+    }
+    final source = (existing?.copyWith(
+              url: candidate.url,
+              clearCatalogueStatus: changingAddress,
+              clearFipsEndpoint: changingAddress,
+              clearPeerNpub: changingAddress,
+            ) ??
+            candidate)
+        .copyWith(towerNpub: reported);
     final oldByStableIdentity = <String, NStackWorkspace>{
       for (final workspace in source.workspaces)
         _workspaceStableIdentity(workspace): workspace,
@@ -141,7 +171,6 @@ class NStackRegistryStore extends ChangeNotifier {
         ),
     ];
     final nextEntry = source.copyWith(
-      name: Uri.parse(source.url).host,
       workspaces: List.unmodifiable(merged),
       workspaceDiscovery: NStackWorkspaceDiscoveryStatus(
         lastAttemptAt: refreshedAt.toUtc(),
@@ -192,6 +221,25 @@ class NStackRegistryStore extends ChangeNotifier {
       ]),
     );
     return nextEntry;
+  }
+
+  Future<void> rename(String signerNpub, String stackId, String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty ||
+        trimmed.length > 128 ||
+        trimmed.contains(RegExp(r'[\x00-\x1f\x7f]'))) {
+      throw StateError('Enter a display name of 1–128 characters.');
+    }
+    final current = await load(signerNpub);
+    if (!current.stacks.any((s) => s.id == stackId)) {
+      throw StateError('NStack no longer exists.');
+    }
+    await replaceAtomic(
+        signerNpub,
+        current.next(stacks: [
+          for (final stack in current.stacks)
+            if (stack.id == stackId) stack.copyWith(name: trimmed) else stack,
+        ]));
   }
 
   Future<NStackRegistry> remove(String signerNpub, String stackId) async {
@@ -344,7 +392,7 @@ NStackRegistry _migrateLegacyBackupDestination(NStackRegistry registry) {
 }
 
 String _workspaceStableIdentity(NStackWorkspace workspace) =>
-    '${workspace.stableRemoteId ?? workspace.remoteId}\u0000${workspace.workspaceOwnerNpub ?? ''}';
+    '${workspace.stableRemoteId ?? workspace.remoteId}\u0000${workspace.workspaceOwnerNpub ?? ''}\u0000${workspace.workspaceServiceNpub ?? ''}';
 
 extension _FirstOrNull<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;

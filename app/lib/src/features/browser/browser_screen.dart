@@ -2528,7 +2528,7 @@ class BrowserScreenState extends State<BrowserScreen>
                             selected.remove(stack.id);
                           }
                         }),
-                        title: Text(stack.name),
+                        title: Text(stack.displayLabel),
                       ),
                   ],
                 ),

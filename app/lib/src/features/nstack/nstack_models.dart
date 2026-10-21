@@ -35,6 +35,10 @@ class NStackWorkspace {
   final String? serviceNpub;
   final String? membershipRole;
 
+  String get displayName => safeConnectionName(name, fallback: 'Workspace');
+  String get displayLabel =>
+      '$displayName · ${abbreviatedNpub(workspaceServiceNpub)}';
+
   bool get isDiscovered =>
       workspaceOwnerNpub != null && workspaceServiceNpub != null;
 
@@ -500,6 +504,7 @@ class NStackEntry {
     required this.id,
     required this.name,
     required this.url,
+    this.towerNpub,
     this.fipsEndpoint,
     this.peerNpub,
     this.workspaces = const [],
@@ -511,6 +516,17 @@ class NStackEntry {
   final String id;
   final String name;
   final String url;
+  final String? towerNpub;
+
+  String? get publicIdentity =>
+      towerNpub ??
+      catalogueStatus?.catalogue?.towerNpub ??
+      workspaces.map((w) => w.serviceNpub).whereType<String>().firstOrNull;
+  String get displayName => name == Uri.parse(url).host
+      ? 'NStack'
+      : safeConnectionName(name, fallback: 'NStack');
+  String get displayLabel =>
+      '$displayName · ${abbreviatedNpub(publicIdentity)}';
   final String? fipsEndpoint;
   final String? peerNpub;
   final List<NStackWorkspace> workspaces;
@@ -519,6 +535,7 @@ class NStackEntry {
   final NStackWorkspaceDiscoveryStatus? workspaceDiscovery;
 
   NStackEntry copyWith({
+    String? towerNpub,
     String? name,
     String? url,
     String? fipsEndpoint,
@@ -534,6 +551,7 @@ class NStackEntry {
   }) {
     return NStackEntry(
       id: id,
+      towerNpub: towerNpub ?? this.towerNpub,
       name: name ?? this.name,
       url: url ?? this.url,
       fipsEndpoint:
@@ -553,6 +571,7 @@ class NStackEntry {
         'id': id,
         'name': name,
         'url': url,
+        'tower_npub': towerNpub,
         'fips_endpoint': fipsEndpoint,
         'peer_npub': peerNpub,
         'workspaces': [for (final workspace in workspaces) workspace.toJson()],
@@ -567,6 +586,8 @@ class NStackEntry {
     final name = _nonEmpty(value['name']);
     final url = canonicalNStackUrl(value['url']?.toString());
     if (id == null || name == null || url == null) return null;
+    final towerNpub = _optionalNpub(value['tower_npub']);
+    if (value['tower_npub'] != null && towerNpub == null) return null;
     final fipsEndpoint =
         canonicalFipsEndpoint(value['fips_endpoint']?.toString());
     final peerNpub = _optionalNpub(value['peer_npub']);
@@ -605,6 +626,7 @@ class NStackEntry {
     return NStackEntry(
       id: id,
       name: name,
+      towerNpub: towerNpub,
       url: url,
       fipsEndpoint: fipsEndpoint,
       peerNpub: peerNpub,
@@ -870,4 +892,23 @@ String? _optionalNpub(Object? value) {
           .hasMatch(text)
       ? text
       : null;
+}
+
+/// Presentation only: never use abbreviated values for identity comparisons.
+String abbreviatedNpub(String? value) {
+  if (value == null || !value.startsWith('npub1') || value.length < 16) {
+    return 'Identity unavailable';
+  }
+  return '${value.substring(0, 9)}…${value.substring(value.length - 4)}';
+}
+
+String safeConnectionName(String value, {required String fallback}) {
+  final text = value.trim();
+  if (text.isEmpty ||
+      text.contains(RegExp(
+          r'https?://|wss?://|npub1|[0-9a-fA-F]{8}-[0-9a-fA-F-]{27,}|[0-9a-fA-F]{64}|(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}',
+          caseSensitive: false))) {
+    return fallback;
+  }
+  return text;
 }

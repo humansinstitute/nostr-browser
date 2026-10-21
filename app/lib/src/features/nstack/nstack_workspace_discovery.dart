@@ -515,9 +515,24 @@ class NStackWorkspaceDiscoveryService {
       identityNpub: identityNpub,
       secret: secret,
     );
+    final identities =
+        discovered.map((w) => w.serviceNpub).whereType<String>().toSet();
+    if (identities.length == 1) {
+      final matches =
+          registry.stacks.where((s) => s.publicIdentity == identities.single);
+      if (matches.isNotEmpty) {
+        return registryStore.applyWorkspaceDiscovery(
+          identityNpub,
+          candidate: matches.first.copyWith(url: canonical),
+          expectedPreviousUrl: matches.first.url,
+          discovered: discovered,
+          refreshedAt: _clock().toUtc(),
+        );
+      }
+    }
     final candidate = NStackEntry(
       id: newNStackOpaqueId(),
-      name: Uri.parse(canonical).host,
+      name: 'NStack',
       url: canonical,
     );
     return registryStore.applyWorkspaceDiscovery(
@@ -581,6 +596,7 @@ class NStackWorkspaceDiscoveryService {
       return registryStore.applyWorkspaceDiscovery(
         identityNpub,
         candidate: stack,
+        expectedPreviousUrl: stack.url,
         discovered: discovered,
         refreshedAt: attemptedAt,
       );

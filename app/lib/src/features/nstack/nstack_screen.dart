@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/app_config.dart';
 import 'nstack_access.dart';
@@ -150,7 +151,7 @@ class _NStackScreenState extends State<NStackScreen> {
           Text(
             widget.config.hasDeviceSecret
                 ? 'Workspace discovery is signed by NBrowser’s active, unlocked '
-                    'identity (${widget.config.deviceNpub}). A website login inside '
+                    'identity (${abbreviatedNpub(widget.config.deviceNpub)}). A website login inside '
                     'a tab does not change this identity. Websites see nothing '
                     'beyond the window.NStack version until you approve discovery.'
                 : 'Unlock NBrowser’s active Nostr identity to add or refresh an '
@@ -193,14 +194,14 @@ class _NStackScreenState extends State<NStackScreen> {
           children: [
             ListTile(
               leading: const Icon(Icons.dns_outlined),
-              title: Text(stack.name),
-              subtitle:
-                  Text('${stack.url}\n${stack.workspaces.length} workspace(s)'),
+              title: Text(stack.displayName),
+              subtitle: Text(
+                  '${abbreviatedNpub(stack.publicIdentity)}\n${stack.workspaces.length} workspace(s)'),
               isThreeLine: true,
               trailing: Wrap(
                 children: [
                   IconButton(
-                    tooltip: 'Refresh ${stack.name} workspaces',
+                    tooltip: 'Refresh workspaces',
                     onPressed: _busy || !widget.config.hasDeviceSecret
                         ? null
                         : () => _refreshStack(stack),
@@ -212,14 +213,24 @@ class _NStackScreenState extends State<NStackScreen> {
                         : const Icon(Icons.refresh),
                   ),
                   IconButton(
-                    tooltip: 'Change ${stack.name} address',
+                    tooltip: 'Rename NStack',
+                    onPressed: _busy ? null : () => _renameStack(stack),
+                    icon: const Icon(Icons.drive_file_rename_outline),
+                  ),
+                  IconButton(
+                    tooltip: 'Reveal connection details',
+                    onPressed: _busy ? null : () => _showDetails(stack),
+                    icon: const Icon(Icons.info_outline),
+                  ),
+                  IconButton(
+                    tooltip: 'Connection details and address',
                     onPressed: _busy || !widget.config.hasDeviceSecret
                         ? null
                         : () => _editStack(stack),
                     icon: const Icon(Icons.edit_outlined),
                   ),
                   IconButton(
-                    tooltip: 'Remove ${stack.name}',
+                    tooltip: 'Remove NStack',
                     onPressed: _busy ? null : () => _removeStack(stack),
                     icon: const Icon(Icons.delete_outline),
                   ),
@@ -239,7 +250,7 @@ class _NStackScreenState extends State<NStackScreen> {
                 leading: const Icon(Icons.warning_amber),
                 title: const Text('Workspace refresh failed'),
                 subtitle: Text(
-                  '${stack.workspaceDiscovery!.errorMessage}\n'
+                  'Could not refresh workspaces. Try again from connection details.\n'
                   '${stack.workspaces.isEmpty ? 'No workspace was saved.' : 'Showing last-known-good workspaces; they may be stale.'}',
                 ),
               )
@@ -261,11 +272,11 @@ class _NStackScreenState extends State<NStackScreen> {
                         workspace.supportsBackup &&
                         stack.workspaceDiscovery?.stale != true,
                   ),
-                  title: Text(workspace.name),
+                  title: Text(workspace.displayName),
                   subtitle: Text(
                     workspace.supportsBackup
-                        ? '${stack.name} · ${workspace.remoteId}'
-                        : '${stack.name} · unavailable for workspace backup',
+                        ? '${stack.displayName} · ${abbreviatedNpub(workspace.workspaceServiceNpub)}'
+                        : '${stack.displayName} · unavailable for workspace backup',
                   ),
                   onTap: _busy ||
                           !workspace.supportsBackup ||
@@ -320,14 +331,14 @@ class _NStackScreenState extends State<NStackScreen> {
               style: Theme.of(context).textTheme.labelLarge,
             ),
             if (status?.hasError == true)
-              Text('Last service refresh failed: ${status!.errorMessage}',
+              Text('Last service refresh failed. Try refreshing again.',
                   style: TextStyle(color: Theme.of(context).colorScheme.error)),
             for (final service
                 in catalogue?.services ?? const <NStackService>[])
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
-                  '${_serviceLabel(service)} — ${service.availability.name}\n${service.endpoint}',
+                  '${_serviceLabel(service)} — ${service.availability.name}',
                   key: ValueKey('nstack-service-${stack.id}-${service.id}'),
                 ),
               ),
@@ -341,7 +352,7 @@ class _NStackScreenState extends State<NStackScreen> {
         'tower' => 'Tower',
         'relay' => 'Relay',
         'blossom' => 'Blossom',
-        _ => service.id,
+        _ => 'Service',
       };
 
   Widget _recoveryCard() {
@@ -371,13 +382,13 @@ class _NStackScreenState extends State<NStackScreen> {
                   key: ValueKey('backup-destination-missing'))
             else if (!destinationAvailable)
               Text(
-                'Selected destination unavailable: ${backupStack?.name ?? 'removed NStack'} · '
-                '${backupWorkspace?.name ?? destination.workspaceRemoteId}. Refresh access or choose another workspace.',
+                'Selected destination unavailable: ${backupStack?.displayName ?? 'removed NStack'} · '
+                '${backupWorkspace?.displayName ?? 'removed workspace'}. Refresh access or choose another workspace.',
                 key: const ValueKey('backup-destination-unavailable'),
               )
             else
               Text(
-                'Backup destination: ${backupStack!.name} · ${backupWorkspace!.name}',
+                'Backup destination: ${backupStack!.displayLabel} · ${backupWorkspace!.displayLabel}',
                 key: const ValueKey('backup-destination-selected'),
               ),
             if (_namespaceState ==
@@ -450,23 +461,55 @@ class _NStackScreenState extends State<NStackScreen> {
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.travel_explore),
-                title: Text(grant.origin),
+                title: const Text('Approved website'),
+                onTap: () => _showWebsiteDetails(grant.origin),
                 subtitle: Text('${grant.stackIds.length} disclosed NStack(s)'),
-                trailing: TextButton(
-                  onPressed: _busy
-                      ? null
-                      : () async {
-                          await widget.accessService.revokeOrigin(
-                              widget.config.deviceNpub, grant.origin);
-                          await _load();
-                        },
-                  child: const Text('Revoke'),
-                ),
+                trailing: Wrap(children: [
+                  IconButton(
+                      tooltip: 'Reveal website origin',
+                      icon: const Icon(Icons.info_outline),
+                      onPressed: _busy
+                          ? null
+                          : () => _showWebsiteDetails(grant.origin)),
+                  TextButton(
+                    onPressed: _busy
+                        ? null
+                        : () async {
+                            await widget.accessService.revokeOrigin(
+                                widget.config.deviceNpub, grant.origin);
+                            await _load();
+                          },
+                    child: const Text('Revoke'),
+                  ),
+                ]),
               ),
           ],
         ),
       ),
     );
+  }
+
+  Future<void> _showWebsiteDetails(String origin) async {
+    final identity = widget.config.deviceNpub;
+    await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+              title: const Text('Website access details'),
+              content: _detail('Website origin', origin),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: const Text('Close')),
+                TextButton(
+                    onPressed: () async {
+                      if (identity != widget.config.deviceNpub) return;
+                      await widget.accessService.revokeOrigin(identity, origin);
+                      if (dialogContext.mounted) Navigator.pop(dialogContext);
+                      await _load();
+                    },
+                    child: const Text('Revoke this website')),
+              ],
+            ));
   }
 
   Future<void> _selectBackupDestination(
@@ -480,7 +523,7 @@ class _NStackScreenState extends State<NStackScreen> {
       _namespaceDestinationKey = null;
       _namespaceState = null;
       _message =
-          'Backup destination selected: ${stack.name} · ${workspace.name}.';
+          'Backup destination selected: ${stack.displayName} · ${workspace.displayName}.';
     });
   }
 
@@ -512,7 +555,7 @@ class _NStackScreenState extends State<NStackScreen> {
       if (mounted && identityEpoch == _identityEpoch) {
         setState(() {
           _namespaceState = null;
-          _message = error.toString().replaceFirst('Bad state: ', '');
+          _message = _safeError(error);
         });
       }
     }
@@ -526,6 +569,97 @@ class _NStackScreenState extends State<NStackScreen> {
         _namespaceState = NStackBackupNamespaceState.enabled;
         _message = 'NBrowser backup enabled for the selected workspace.';
       });
+
+  String _safeError(Object error) {
+    if (error is StateError &&
+        (error.message ==
+                'NStack identity could not be matched. Add it as a separate connection.' ||
+            error.message ==
+                'NStack identity changed. Add it as a separate connection.')) {
+      return error.message.toString();
+    }
+    return 'The operation could not be completed. Check the connection details and try again.';
+  }
+
+  Future<void> _renameStack(NStackEntry stack) async {
+    final identity = widget.config.deviceNpub;
+    var draftName = stack.displayName;
+    final name = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+              title: const Text('Rename NStack'),
+              content: TextFormField(
+                  initialValue: draftName,
+                  onChanged: (value) => draftName = value,
+                  autofocus: true,
+                  maxLength: 128,
+                  decoration: const InputDecoration(labelText: 'Display name')),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Cancel')),
+                FilledButton(
+                    onPressed: () => Navigator.pop(context, draftName),
+                    child: const Text('Save')),
+              ],
+            ));
+    if (name == null || !mounted || identity != widget.config.deviceNpub) {
+      return;
+    }
+    await _run(() async {
+      await widget.registryStore.rename(identity, stack.id, name);
+      widget.onRegistryChanged();
+      _message = 'NStack display name saved.';
+    });
+  }
+
+  Future<void> _showDetails(NStackEntry stack) async {
+    final identity = widget.config.deviceNpub;
+    await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+              title: const Text('Connection details'),
+              content: SizedBox(
+                  width: 520,
+                  child: SingleChildScrollView(
+                      child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _detail('Connection address', stack.url),
+                      if (stack.publicIdentity != null)
+                        _detail('NStack identity', stack.publicIdentity!),
+                      _detail('Active identity', identity),
+                      for (final service
+                          in stack.catalogueStatus?.catalogue?.services ??
+                              <NStackService>[])
+                        _detail(_serviceLabel(service), service.endpoint),
+                      for (final workspace in stack.workspaces) ...[
+                        Text(workspace.displayName),
+                        _detail('Workspace ID', workspace.remoteId),
+                        if (workspace.workspaceServiceNpub != null)
+                          _detail('Workspace identity',
+                              workspace.workspaceServiceNpub!),
+                      ],
+                    ],
+                  ))),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Close'))
+              ],
+            ));
+  }
+
+  Widget _detail(String label, String value) => ListTile(
+        contentPadding: EdgeInsets.zero,
+        title: Text(label),
+        subtitle: SelectableText(value),
+        trailing: IconButton(
+            tooltip: 'Copy $label',
+            icon: const Icon(Icons.copy),
+            onPressed: () => Clipboard.setData(ClipboardData(text: value))),
+      );
 
   Future<void> _editStack([NStackEntry? existing]) async {
     final address = await showDialog<String>(
@@ -561,9 +695,9 @@ class _NStackScreenState extends State<NStackScreen> {
           ? ' Service catalogue refresh failed; the last verified catalogue was retained.'
           : ' Services verified.';
       _message = result.workspaces.isEmpty
-          ? '${result.name} saved; this identity has no accessible workspaces.'
+          ? '${result.displayName} saved; this identity has no accessible workspaces.'
               '$serviceSuffix'
-          : '${result.name} saved with ${result.workspaces.length} workspace(s).'
+          : '${result.displayName} saved with ${result.workspaces.length} workspace(s).'
               '$serviceSuffix';
     });
   }
@@ -603,7 +737,7 @@ class _NStackScreenState extends State<NStackScreen> {
     final confirmed = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-            title: Text('Remove ${stack.name}?'),
+            title: Text('Remove ${stack.displayName}?'),
             content: const Text(
                 'This removes its local metadata and website discovery aliases. Existing encrypted backup objects are immutable.'),
             actions: [
@@ -622,7 +756,7 @@ class _NStackScreenState extends State<NStackScreen> {
       widget.accessService.revokeStack(stack.id);
       await widget.registryStore.remove(widget.config.deviceNpub, stack.id);
       widget.onRegistryChanged();
-      _message = '${stack.name} removed.';
+      _message = '${stack.displayName} removed.';
     });
   }
 
@@ -649,7 +783,6 @@ class _NStackScreenState extends State<NStackScreen> {
               builder: (context) => AlertDialog(
                 title: const Text('Restore NBrowser settings?'),
                 content: Text(
-                  'Host: ${preview.pointer.hostUrl}\n'
                   'Snapshot: ${preview.snapshot.createdAt.toLocal()}\n'
                   'NStacks: ${preview.snapshot.registry.stacks.length}\n'
                   'Browser links: ${preview.snapshot.registry.stacks.fold<int>(0, (sum, stack) => sum + stack.settings.bookmarks.length)}\n\n'
@@ -686,7 +819,7 @@ class _NStackScreenState extends State<NStackScreen> {
       await action();
     } catch (error) {
       if (identityEpoch == _identityEpoch) {
-        _message = error.toString().replaceFirst('Bad state: ', '');
+        _message = _safeError(error);
       }
     } finally {
       if (identityEpoch == _identityEpoch) {

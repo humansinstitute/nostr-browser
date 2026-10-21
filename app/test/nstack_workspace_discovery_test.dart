@@ -641,7 +641,7 @@ void main() {
     );
     final refreshed = await service.refresh(
         identityNpub: identity.npub, secret: secret, stackId: 'stack-internal');
-    expect(refreshed.name, 'stack.example');
+    expect(refreshed.name, 'Manual label');
     expect(refreshed.workspaces.map((item) => item.remoteId),
         ['workspace-a', 'workspace-b']);
     expect(refreshed.workspaces.first.id, 'legacy-alias');
@@ -652,6 +652,43 @@ void main() {
     expect(roundTrip?.stacks.single.workspaces.first.workspaceOwnerNpub,
         identity.npub);
     expect(roundTrip?.stacks.single.workspaceDiscovery?.stale, isFalse);
+  });
+
+  test(
+      'adding another endpoint with the same Tower identity keeps one saved stack',
+      () async {
+    final store = NStackRegistryStore();
+    final original = _discovered('workspace-a', 'Alpha', identity.npub);
+    final discovered = NStackWorkspace(
+      id: original.id,
+      name: original.name,
+      remoteId: original.remoteId,
+      stableRemoteId: original.stableRemoteId,
+      workspaceOwnerNpub: original.workspaceOwnerNpub,
+      workspaceServiceNpub: original.workspaceServiceNpub,
+      serviceNpub: identity.npub,
+    );
+    final service = NStackWorkspaceDiscoveryService(
+        registryStore: store,
+        discovery: _SequenceDiscovery([
+          [discovered],
+          [discovered]
+        ]));
+    final first = await service.add(
+        identityNpub: identity.npub,
+        secret: secret,
+        address: 'https://first.example');
+    await store.rename(identity.npub, first.id, 'Home NStack');
+    final moved = await service.add(
+        identityNpub: identity.npub,
+        secret: secret,
+        address: 'https://second.example');
+    final restarted = await NStackRegistryStore().load(identity.npub);
+    expect(restarted.stacks, hasLength(1));
+    expect(moved.id, first.id);
+    expect(moved.name, 'Home NStack');
+    expect(moved.url, 'https://second.example');
+    expect(moved.workspaces.single.id, first.workspaces.single.id);
   });
 
   test('linked legacy to PG transition retains the private workspace alias',
