@@ -143,11 +143,11 @@ void main() {
       }
       await tester.tap(find.byTooltip('Profile'));
       await tester.pumpAndSettle();
-      expect(find.text('Setup'), findsOneWidget);
+      expect(find.text('Settings'), findsOneWidget);
       await capture(tester, 'avatar-menu-${width.toInt()}');
       final hover = await tester.createGesture(kind: PointerDeviceKind.mouse);
       await hover.addPointer(location: const Offset(0, 0));
-      await hover.moveTo(tester.getCenter(find.text('Setup')));
+      await hover.moveTo(tester.getCenter(find.text('Settings')));
       await tester.pump(const Duration(milliseconds: 250));
       await capture(tester, 'menu-hover-${width.toInt()}');
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
@@ -187,7 +187,6 @@ void main() {
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(host(SetupScreen(
         config: config,
-        bridge: NativeCoreBridge(),
         fipsRuntime: FipsRuntimeService(
             isMacOS: false, isLinux: false, isAndroid: false, isIOS: false),
         onConfigChanged: (_) {},

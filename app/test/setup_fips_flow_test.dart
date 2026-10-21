@@ -5,7 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wingman_app/src/core/app_config.dart';
 import 'package:wingman_app/src/core/fips_runtime_service.dart';
-import 'package:wingman_app/src/core/native_core_bridge.dart';
 import 'package:wingman_app/src/features/setup/setup_screen.dart';
 
 void main() {
@@ -32,7 +31,6 @@ void main() {
         home: Scaffold(
             body: SetupScreen(
       config: AppConfig.defaults(),
-      bridge: NativeCoreBridge(),
       fipsRuntime: runtime,
       onConfigChanged: (_) {},
       onClearBrowserData: () async {},
@@ -112,7 +110,6 @@ void main() {
                 children: [
                   SetupScreen(
                     config: config,
-                    bridge: NativeCoreBridge(),
                     fipsRuntime: runtime,
                     onConfigChanged: (next) => rebuild(() => config = next),
                     onClearBrowserData: () async {},
@@ -133,7 +130,16 @@ void main() {
 
     Future<void> submitTarget() async {
       if (find.text('Open FIPS app').evaluate().isEmpty) {
-        await tester.drag(find.byType(ListView), const Offset(0, 1000));
+        await tester.scrollUntilVisible(
+          find.byKey(const ValueKey('advanced-diagnostics')),
+          300,
+          scrollable: find.byType(Scrollable).first,
+        );
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('advanced-diagnostics')),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('advanced-diagnostics')));
         await tester.pumpAndSettle();
       }
       await tester.ensureVisible(find.text('Open FIPS app'));
@@ -210,7 +216,6 @@ void main() {
             return Scaffold(
               body: SetupScreen(
                 config: config,
-                bridge: NativeCoreBridge(),
                 fipsRuntime: runtime,
                 onConfigChanged: (next) => rebuild(() => config = next),
                 onClearBrowserData: () async {},
@@ -221,6 +226,17 @@ void main() {
         ),
       ),
     );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('advanced-diagnostics')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('advanced-diagnostics')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('advanced-diagnostics')));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Open FIPS app'));
     await tester.pumpAndSettle();

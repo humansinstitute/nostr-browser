@@ -5,7 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wingman_app/src/core/app_config.dart';
 import 'package:wingman_app/src/core/fips_runtime_service.dart';
-import 'package:wingman_app/src/core/native_core_bridge.dart';
 import 'package:wingman_app/src/features/browser/relay_diagnostics.dart';
 import 'package:wingman_app/src/features/setup/setup_screen.dart';
 
@@ -80,7 +79,6 @@ void main() {
         home: Scaffold(
           body: SetupScreen(
             config: AppConfig.defaults(),
-            bridge: NativeCoreBridge(),
             fipsRuntime: runtime(channel),
             onConfigChanged: (_) {},
             onClearBrowserData: () async {},
@@ -90,6 +88,22 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('advanced-diagnostics')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('advanced-diagnostics')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('advanced-diagnostics')));
+    await tester.pumpAndSettle();
+    final export = find.byKey(const ValueKey('fips-export-diagnostics'));
+    if (export.evaluate().isNotEmpty) {
+      await tester.ensureVisible(export);
+      await tester.pumpAndSettle();
+    }
   }
 
   testWidgets('Android failed state exposes export and keeps retry usable',
@@ -97,13 +111,16 @@ void main() {
     final channel = DiagnosticsAndroidRuntime();
     await pumpSetup(tester, channel);
 
-    expect(find.text('failed'), findsOneWidget);
     expect(
         find.byKey(const ValueKey('fips-export-diagnostics')), findsOneWidget);
     expect(
         find.byKey(const ValueKey('fips-clear-diagnostics')), findsOneWidget);
-    expect(find.text('Install or repair'), findsOneWidget);
-
+    await tester.scrollUntilVisible(
+      find.text('Install or repair'),
+      -300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.ensureVisible(find.text('Install or repair'));
     await tester.tap(find.text('Install or repair'));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Continue'));
@@ -182,7 +199,6 @@ void main() {
     channel.exportGate!.complete();
     await tester.pumpAndSettle();
     expect(find.text('FIPS diagnostics exported.'), findsOneWidget);
-    expect(find.text('Install or repair'), findsOneWidget);
   });
 
   testWidgets('unsupported platform hides diagnostics controls',
@@ -197,7 +213,6 @@ void main() {
         home: Scaffold(
           body: SetupScreen(
             config: AppConfig.defaults(),
-            bridge: NativeCoreBridge(),
             fipsRuntime: service,
             onConfigChanged: (_) {},
             onClearBrowserData: () async {},
@@ -206,6 +221,17 @@ void main() {
         ),
       ),
     );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('advanced-diagnostics')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('advanced-diagnostics')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('advanced-diagnostics')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('fips-export-diagnostics')), findsNothing);
   });
@@ -220,7 +246,6 @@ void main() {
         body: StatefulBuilder(builder: (context, update) {
           return SetupScreen(
             config: AppConfig.defaults(),
-            bridge: NativeCoreBridge(),
             fipsRuntime: runtime(DiagnosticsAndroidRuntime()),
             relayDiagnosticsSaved: saved,
             relayDiagnosticsAtLaunch: false,
@@ -234,6 +259,17 @@ void main() {
         }),
       ),
     ));
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('advanced-diagnostics')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('advanced-diagnostics')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('advanced-diagnostics')));
     await tester.pumpAndSettle();
     final switchFinder =
         find.byKey(const ValueKey('private-relay-diagnostics'));

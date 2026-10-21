@@ -3,9 +3,8 @@ import 'package:flutter/material.dart';
 import '../../core/app_config.dart';
 import '../../core/fips_app_target.dart';
 import '../../core/fips_runtime_service.dart';
-import '../../core/native_core_bridge.dart';
-import '../browser/signer_policy.dart';
 import '../browser/relay_diagnostics.dart';
+import '../browser/signer_policy.dart';
 
 class SetupScreen extends StatefulWidget {
   const SetupScreen({
@@ -13,7 +12,6 @@ class SetupScreen extends StatefulWidget {
     this.relayDiagnosticsSaved = false,
     this.relayDiagnosticsAtLaunch = false,
     this.onRelayDiagnosticsChanged,
-    required this.bridge,
     required this.fipsRuntime,
     required this.onConfigChanged,
     required this.onClearBrowserData,
@@ -26,7 +24,6 @@ class SetupScreen extends StatefulWidget {
   final bool relayDiagnosticsSaved;
   final bool relayDiagnosticsAtLaunch;
   final Future<void> Function(bool)? onRelayDiagnosticsChanged;
-  final NativeCoreBridge bridge;
   final FipsRuntimeService fipsRuntime;
   final ValueChanged<AppConfig> onConfigChanged;
   final Future<void> Function() onClearBrowserData;
@@ -38,18 +35,8 @@ class SetupScreen extends StatefulWidget {
 }
 
 class _SetupScreenState extends State<SetupScreen> {
-  late final TextEditingController _towerController;
-  late final TextEditingController _appNpubController;
   late final TextEditingController _flightDeckController;
-  late final TextEditingController _workspaceController;
-  late final TextEditingController _workspaceServiceController;
-  late final TextEditingController _channelController;
-  late final TextEditingController _registrationSecretController;
-  late final TextEditingController _deviceNpubController;
-  late final TextEditingController _devicePublicKeyHexController;
-  late final TextEditingController _trustedOriginsController;
-  late bool _rememberNip98Approvals;
-  late bool _displayExperimentalFlightDeckDriveSync;
+  late List<String> _trustedOrigins;
   String? _message;
   String? _fipsMessage;
   bool _busy = false;
@@ -60,42 +47,15 @@ class _SetupScreenState extends State<SetupScreen> {
   @override
   void initState() {
     super.initState();
-    _towerController = TextEditingController(text: widget.config.towerUrl);
-    _appNpubController = TextEditingController(text: widget.config.appNpub);
     _flightDeckController =
         TextEditingController(text: widget.config.flightDeckUrl);
-    _workspaceController =
-        TextEditingController(text: widget.config.workspaceId);
-    _workspaceServiceController =
-        TextEditingController(text: widget.config.workspaceServiceNpub);
-    _channelController = TextEditingController(text: widget.config.channelId);
-    _registrationSecretController =
-        TextEditingController(text: widget.config.registrationSecret);
-    _deviceNpubController =
-        TextEditingController(text: widget.config.deviceNpub);
-    _devicePublicKeyHexController =
-        TextEditingController(text: widget.config.devicePublicKeyHex);
-    _trustedOriginsController = TextEditingController(
-      text: widget.config.trustedOrigins.join('\n'),
-    );
-    _rememberNip98Approvals = widget.config.rememberNip98Approvals;
-    _displayExperimentalFlightDeckDriveSync =
-        widget.config.displayExperimentalFlightDeckDriveSync;
+    _trustedOrigins = List.of(widget.config.trustedOrigins);
     _refreshFipsStatus();
   }
 
   @override
   void dispose() {
-    _towerController.dispose();
-    _appNpubController.dispose();
     _flightDeckController.dispose();
-    _workspaceController.dispose();
-    _workspaceServiceController.dispose();
-    _channelController.dispose();
-    _registrationSecretController.dispose();
-    _deviceNpubController.dispose();
-    _devicePublicKeyHexController.dispose();
-    _trustedOriginsController.dispose();
     super.dispose();
   }
 
@@ -104,247 +64,273 @@ class _SetupScreenState extends State<SetupScreen> {
     return ListView(
       padding: const EdgeInsets.all(24),
       children: [
-        Text('Setup', style: Theme.of(context).textTheme.headlineMedium),
-        const SizedBox(height: 20),
-        LayoutBuilder(builder: (context, constraints) {
-          final action = OutlinedButton(
-            onPressed: _busy ? null : _resetBrowserData,
-            child: const Text('Reset browser data'),
-          );
-          final narrow = constraints.maxWidth < 500;
-          final description = ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.cleaning_services_outlined),
-            title: const Text('Browser data'),
-            subtitle: const Text('Clear cookies, cache, and local storage.'),
-            trailing: narrow ? null : action,
-          );
-          return narrow
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [description, action],
-                )
-              : description;
-        }),
-        const SizedBox(height: 14),
+        Text('Settings', style: Theme.of(context).textTheme.headlineMedium),
+        const SizedBox(height: 6),
+        const Text(
+            'Browser connections, permissions, privacy, and diagnostics.'),
+        const SizedBox(height: 24),
+        _sectionTitle('FIPS status'),
+        const SizedBox(height: 8),
         _fipsCard(),
-        const SizedBox(height: 14),
-        _towerSyncCard(),
-        const SizedBox(height: 14),
-        if (_displayExperimentalFlightDeckDriveSync) ...[
-          _field(
-            controller: _appNpubController,
-            label: 'Flight Deck App npub',
-            icon: Icons.apps,
-          ),
-          _field(
-            controller: _workspaceController,
-            label: 'Workspace ID',
-            icon: Icons.workspaces_outline,
-          ),
-          _field(
-            controller: _workspaceServiceController,
-            label: 'Workspace service npub',
-            icon: Icons.badge_outlined,
-          ),
-          _field(
-            controller: _channelController,
-            label: 'Default Channel ID',
-            icon: Icons.tag,
-          ),
-        ],
-        _field(
-          controller: _deviceNpubController,
-          label: 'Device npub',
-          readOnly: true,
-          icon: Icons.fingerprint,
-        ),
-        _field(
-          controller: _devicePublicKeyHexController,
-          label: 'Device public key hex',
-          readOnly: true,
-          icon: Icons.tag,
-        ),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: Icon(
-            widget.config.hasDeviceSecret
-                ? Icons.lock_open_outlined
-                : Icons.lock_outline,
-          ),
-          title: const Text('Signer key'),
-          subtitle: Text(
-            widget.config.hasDeviceSecret
-                ? 'Unlocked for this app session. The nsec is not shown or saved in settings.'
-                : 'Locked. Open the browser avatar menu to create, import or unlock your identity.',
-          ),
-        ),
-        if (widget.config.canRegisterDevice)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 14),
-            child: Text(
-                'Optional Tower device registration: ${widget.config.towerUrl}. '
-                'This uses the desktop native core and is separate from publishing your public Nostr profile.'),
-          ),
-        if (_displayExperimentalFlightDeckDriveSync ||
-            widget.config.canRegisterDevice)
-          _field(
-            controller: _registrationSecretController,
-            label: 'Registration signer key',
-            icon: Icons.admin_panel_settings_outlined,
-            obscureText: true,
-          ),
-        _field(
-          controller: _trustedOriginsController,
-          label: 'Trusted origins',
-          icon: Icons.verified_user_outlined,
-          maxLines: 3,
-        ),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          value: _rememberNip98Approvals,
-          onChanged: (value) {
-            setState(() {
-              _rememberNip98Approvals = value;
-            });
-          },
-          title: const Text('Remember NIP-98 approvals'),
-          secondary: const Icon(Icons.verified_outlined),
-        ),
-        const SizedBox(height: 16),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: [
-            FilledButton.icon(
-              onPressed: _busy ? null : _save,
-              icon: const Icon(Icons.save_outlined),
-              label: const Text('Save'),
-            ),
-            if (_displayExperimentalFlightDeckDriveSync ||
-                widget.config.canRegisterDevice) ...[
-              OutlinedButton.icon(
-                onPressed: _busy ? null : _registerDevice,
-                icon: const Icon(Icons.how_to_reg_outlined),
-                label: const Text('Register device'),
-              ),
-              OutlinedButton.icon(
-                onPressed: _busy ? null : _validateChannel,
-                icon: const Icon(Icons.check_circle_outline),
-                label: const Text('Validate channel'),
-              ),
-            ],
-          ],
-        ),
+        const SizedBox(height: 24),
+        _sectionTitle('Site permissions'),
+        const SizedBox(height: 8),
+        _sitePermissionsCard(),
+        const SizedBox(height: 24),
+        _sectionTitle('Privacy & browser data'),
+        const SizedBox(height: 8),
+        _privacyCard(),
+        const SizedBox(height: 24),
+        _sectionTitle('Advanced diagnostics'),
+        const SizedBox(height: 8),
+        _advancedCard(),
         if (_message != null) ...[
           const SizedBox(height: 16),
-          Text(_message!),
+          Text(_message!, key: const ValueKey('settings-message')),
         ],
-        const SizedBox(height: 16),
-        CheckboxListTile(
-          contentPadding: EdgeInsets.zero,
-          value: _displayExperimentalFlightDeckDriveSync,
-          onChanged: (value) {
-            if (value == null) return;
-            setState(() {
-              _displayExperimentalFlightDeckDriveSync = value;
-            });
-            widget.onConfigChanged(
-              _currentConfig().copyWith(
-                displayExperimentalFlightDeckDriveSync: value,
-              ),
-            );
-          },
-          title: const Text(
-            'Display experimental future Flight Deck Drive sync',
-          ),
-          controlAffinity: ListTileControlAffinity.leading,
-        ),
-        const SizedBox(height: 14),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SwitchListTile(
-                  key: const ValueKey('private-relay-diagnostics'),
-                  contentPadding: EdgeInsets.zero,
-                  value: widget.relayDiagnosticsSaved,
-                  onChanged:
-                      _relayBusy || widget.onRelayDiagnosticsChanged == null
-                          ? null
-                          : _setRelayDiagnostics,
-                  title: const Text('Private relay diagnostics'),
-                  subtitle: const Text(
-                    'Off by default. Saves a local, bounded trace of relay stages with random IDs. No URLs, content, keys, or identities are recorded.',
-                  ),
-                ),
-                if (widget.relayDiagnosticsSaved !=
-                    widget.relayDiagnosticsAtLaunch)
-                  const Text('Restart WMapp to apply'),
-                const Text(
-                  'Turning this off stops new records after restart. Existing trace files remain until cleared.',
-                ),
-                TextButton(
-                  key: const ValueKey('clear-relay-diagnostics'),
-                  onPressed: _relayBusy ? null : _clearRelayDiagnostics,
-                  child: const Text('Clear relay diagnostics'),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 24),
       ],
     );
   }
 
-  Widget _towerSyncCard() {
-    final local = SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl);
+  Widget _sectionTitle(String title) => Text(
+        title,
+        style: Theme.of(context).textTheme.titleLarge,
+      );
+
+  Widget _sitePermissionsCard() {
+    final builtIn = SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl);
+    final external = SignerPolicy.normalizeOrigin(widget.config.flightDeckUrl);
+    final legacyTower = SignerPolicy.normalizeOrigin(widget.config.towerUrl);
+    final origins = <String>{
+      if (builtIn.isNotEmpty) builtIn,
+      if (external.isNotEmpty) external,
+      if (legacyTower.isNotEmpty) legacyTower,
+      for (final value in _trustedOrigins)
+        if (SignerPolicy.normalizeOrigin(value).isNotEmpty)
+          SignerPolicy.normalizeOrigin(value),
+    }.toList(growable: false);
+
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(vertical: 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Flight Deck browser',
-                style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            const Text(
-              'Choose FIPS in your existing Flight Deck workspace and approve '
-              'its mesh endpoint. No native Tower URL is needed.',
-            ),
-            const SizedBox(height: 14),
-            if (_displayExperimentalFlightDeckDriveSync)
-              _field(
-                controller: _towerController,
-                label: 'Tower URL',
-                icon: Icons.dns_outlined,
-                helperText: 'Optional native Drive sync configuration.',
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: Text(
+                'Only these exact origins may ask Nostr Browser for protected capabilities. Signing still requires its own request approval.',
               ),
-            _field(
-              controller: _flightDeckController,
-              label: 'Flight Deck URL',
-              icon: Icons.public,
-              helperText:
-                  'Your existing external Flight Deck URL. Only this exact '
-                  'origin can pair, plus built-in Flight Deck. Leave blank '
-                  'for built-in only.',
-              onChanged: (_) => setState(() {}),
             ),
-            Text(local.isEmpty
-                ? 'Built-in Flight Deck is not currently available.'
-                : 'Built-in Flight Deck: $local'),
-            const SizedBox(height: 8),
-            const Text(
-              'Save, reload your existing Flight Deck tab, then select FIPS '
-              'and approve pairing. Changing the Flight Deck URL revokes previous '
-              'pairings. Keep the same page URL to retain browser data.',
-            ),
+            if (origins.isEmpty)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 12, 16, 16),
+                child: Text('No sites have permission yet.'),
+              ),
+            for (final origin in origins)
+              ListTile(
+                key: ValueKey('site-permission-$origin'),
+                leading: Icon(
+                  origin == builtIn
+                      ? Icons.home_outlined
+                      : Icons.language_outlined,
+                ),
+                title: SelectableText(origin),
+                subtitle: Text(
+                  origin == builtIn
+                      ? 'Built-in Flight Deck · included with Nostr Browser'
+                      : origin == external
+                          ? 'External Flight Deck · exact origin only'
+                          : origin == legacyTower
+                              ? 'Legacy site permission · exact origin only'
+                              : 'Site permission · exact origin only',
+                ),
+                trailing: origin == builtIn
+                    ? const Tooltip(
+                        message: 'Built-in permission',
+                        child: Icon(Icons.lock_outline),
+                      )
+                    : IconButton(
+                        key: ValueKey('revoke-site-permission-$origin'),
+                        tooltip: 'Revoke $origin',
+                        onPressed:
+                            _busy ? null : () => _revokeSitePermission(origin),
+                        icon: const Icon(Icons.delete_outline),
+                      ),
+              ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _privacyCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final action = OutlinedButton.icon(
+              key: const ValueKey('reset-browser-data'),
+              onPressed: _busy ? null : _resetBrowserData,
+              icon: const Icon(Icons.delete_sweep_outlined),
+              label: const Text('Reset browser data'),
+            );
+            const details = ListTile(
+              leading: Icon(Icons.shield_outlined),
+              title: Text('Data stored by websites'),
+              subtitle: Text(
+                'Clear cookies, cache, local storage, and service worker data. Sites may sign out.',
+              ),
+            );
+            if (constraints.maxWidth >= 520) {
+              return ListTile(
+                leading: const Icon(Icons.shield_outlined),
+                title: const Text('Data stored by websites'),
+                subtitle: const Text(
+                  'Clear cookies, cache, local storage, and service worker data. Sites may sign out.',
+                ),
+                trailing: action,
+              );
+            }
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [details, action],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _advancedCard() {
+    return Card(
+      child: ExpansionTile(
+        key: const ValueKey('advanced-diagnostics'),
+        title: const Text('Technical controls and compatibility'),
+        subtitle: const Text(
+            'FIPS details, external Flight Deck, and private relay traces'),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        expandedCrossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Divider(),
+          Text('FIPS diagnostics',
+              style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          if (_fipsStatus?.nodeNpub != null)
+            SelectableText('Node: ${_fipsStatus!.nodeNpub}'),
+          if (_fipsStatus?.nodeNpub != null) const SizedBox(height: 8),
+          _fipsDiagnosticControls(),
+          if (_fipsMessage != null) ...[
+            const SizedBox(height: 8),
+            Text(_fipsMessage!),
+          ],
+          const SizedBox(height: 20),
+          Text('External Flight Deck',
+              style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 4),
+          const Text(
+            'Optional compatibility setting. Built-in Flight Deck works automatically. Only the exact external origin is allowed.',
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            key: const ValueKey('external-flight-deck-url'),
+            controller: _flightDeckController,
+            keyboardType: TextInputType.url,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              labelText: 'External Flight Deck URL',
+              hintText: 'https://flight-deck.example',
+            ),
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton(
+              key: const ValueKey('save-external-flight-deck'),
+              onPressed: _busy ? null : _saveExternalFlightDeck,
+              child: const Text('Save external Flight Deck'),
+            ),
+          ),
+          const SizedBox(height: 20),
+          SwitchListTile(
+            key: const ValueKey('private-relay-diagnostics'),
+            contentPadding: EdgeInsets.zero,
+            value: widget.relayDiagnosticsSaved,
+            onChanged: _relayBusy || widget.onRelayDiagnosticsChanged == null
+                ? null
+                : _setRelayDiagnostics,
+            title: const Text('Private relay diagnostics'),
+            subtitle: const Text(
+              'Off by default. Saves a bounded local trace with random IDs—never URLs, content, keys, or identities.',
+            ),
+          ),
+          if (widget.relayDiagnosticsSaved != widget.relayDiagnosticsAtLaunch)
+            const Text('Restart WMapp to apply'),
+          const Text(
+            'Turning this off stops new records after restart. Existing traces remain until cleared.',
+          ),
+          TextButton(
+            key: const ValueKey('clear-relay-diagnostics'),
+            onPressed: _relayBusy ? null : _clearRelayDiagnostics,
+            child: const Text('Clear relay diagnostics'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _fipsDiagnosticControls() {
+    final state = _fipsStatus?.state;
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        OutlinedButton.icon(
+          key: const ValueKey('fips-refresh'),
+          onPressed: _busy ? null : _refreshFipsStatus,
+          icon: const Icon(Icons.refresh),
+          label: const Text('Refresh'),
+        ),
+        if (widget.fipsRuntime.supportsStop &&
+            (state == FipsRuntimeState.running ||
+                state == FipsRuntimeState.starting ||
+                state == FipsRuntimeState.degraded))
+          OutlinedButton.icon(
+            key: const ValueKey('fips-stop'),
+            onPressed: _busy ? null : _stopFips,
+            icon: const Icon(Icons.stop_circle_outlined),
+            label: const Text('Stop FIPS'),
+          ),
+        if (widget.fipsRuntime.supportsDiagnosticsExport)
+          OutlinedButton.icon(
+            key: const ValueKey('fips-export-diagnostics'),
+            onPressed: _exportBusy ? null : _exportFipsDiagnostics,
+            icon: _exportBusy
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.ios_share_outlined),
+            label: Text(_exportBusy ? 'Exporting…' : 'Export diagnostics'),
+          ),
+        if (widget.fipsRuntime.supportsDiagnosticsExport)
+          TextButton.icon(
+            key: const ValueKey('fips-clear-diagnostics'),
+            onPressed: _exportBusy ? null : _clearFipsDiagnostics,
+            icon: const Icon(Icons.delete_outline),
+            label: const Text('Clear diagnostics'),
+          ),
+        OutlinedButton.icon(
+          onPressed: _busy ? null : _openFipsApp,
+          icon: const Icon(Icons.open_in_browser),
+          label: const Text('Open FIPS app'),
+        ),
+      ],
     );
   }
 
@@ -379,10 +365,6 @@ class _SetupScreenState extends State<SetupScreen> {
             ),
             const SizedBox(height: 8),
             Text(status?.detail ?? 'Checking bundled FIPS runtime…'),
-            if (status?.nodeNpub != null) ...[
-              const SizedBox(height: 6),
-              SelectableText('Node: ${status!.nodeNpub}'),
-            ],
             const SizedBox(height: 12),
             SwitchListTile(
               key: const ValueKey('fips-enabled'),
@@ -402,62 +384,13 @@ class _SetupScreenState extends State<SetupScreen> {
                       });
                     },
             ),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                OutlinedButton.icon(
-                  onPressed: _busy ? null : _refreshFipsStatus,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Refresh'),
-                ),
-                if (canInstall)
-                  FilledButton.icon(
-                    onPressed: _busy ? null : _installOrRepairFips,
-                    icon: const Icon(Icons.admin_panel_settings_outlined),
-                    label: const Text('Install or repair'),
-                  ),
-                if (widget.fipsRuntime.supportsStop &&
-                    (state == FipsRuntimeState.running ||
-                        state == FipsRuntimeState.starting ||
-                        state == FipsRuntimeState.degraded))
-                  OutlinedButton.icon(
-                    key: const ValueKey('fips-stop'),
-                    onPressed: _busy ? null : _stopFips,
-                    icon: const Icon(Icons.stop_circle_outlined),
-                    label: const Text('Stop FIPS'),
-                  ),
-                if (widget.fipsRuntime.supportsDiagnosticsExport)
-                  OutlinedButton.icon(
-                    key: const ValueKey('fips-export-diagnostics'),
-                    onPressed: _exportBusy ? null : _exportFipsDiagnostics,
-                    icon: _exportBusy
-                        ? const SizedBox.square(
-                            dimension: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.ios_share_outlined),
-                    label:
-                        Text(_exportBusy ? 'Exporting…' : 'Export diagnostics'),
-                  ),
-                if (widget.fipsRuntime.supportsDiagnosticsExport)
-                  TextButton.icon(
-                    key: const ValueKey('fips-clear-diagnostics'),
-                    onPressed: _exportBusy ? null : _clearFipsDiagnostics,
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('Clear diagnostics'),
-                  ),
-                OutlinedButton.icon(
-                  onPressed: _busy ? null : _openFipsApp,
-                  icon: const Icon(Icons.open_in_browser),
-                  label: const Text('Open FIPS app'),
-                ),
-              ],
-            ),
-            if (_fipsMessage != null) ...[
-              const SizedBox(height: 10),
-              Text(_fipsMessage!),
-            ],
+            if (canInstall)
+              FilledButton.icon(
+                key: const ValueKey('fips-install-repair'),
+                onPressed: _busy ? null : _installOrRepairFips,
+                icon: const Icon(Icons.build_circle_outlined),
+                label: const Text('Install or repair'),
+              ),
           ],
         ),
       ),
@@ -655,9 +588,12 @@ class _SetupScreenState extends State<SetupScreen> {
       }
 
       final origin = target.origin;
-      final alreadyTrusted = widget.config.effectiveTrustedOrigins().any(
-            (value) => SignerPolicy.normalizeOrigin(value) == origin,
-          );
+      final alreadyTrusted = [
+        ...widget.config.effectiveTrustedOrigins(),
+        ..._trustedOrigins,
+      ].any(
+        (value) => SignerPolicy.normalizeOrigin(value) == origin,
+      );
       if (!alreadyTrusted) {
         if (!mounted) throw StateError('The setup screen closed.');
         final trust = await _showSettledDialog<bool>(
@@ -680,14 +616,11 @@ class _SetupScreenState extends State<SetupScreen> {
             ) ??
             false;
         if (!trust) return 'FIPS app opening cancelled.';
-        final trustedOrigins = {
-          ..._trustedOriginsController.text
-              .split('\n')
-              .map((line) => line.trim())
-              .where((line) => line.isNotEmpty),
+        final trustedOrigins = <String>{
+          ..._trustedOrigins,
           origin,
         }.toList(growable: false);
-        _trustedOriginsController.text = trustedOrigins.join('\n');
+        if (mounted) setState(() => _trustedOrigins = trustedOrigins);
         configToPersist = widget.config.copyWith(
           trustedOrigins: trustedOrigins,
         );
@@ -749,46 +682,79 @@ class _SetupScreenState extends State<SetupScreen> {
     return status;
   }
 
-  Widget _field({
-    required TextEditingController controller,
-    required String label,
-    required IconData icon,
-    bool obscureText = false,
-    bool readOnly = false,
-    int maxLines = 1,
-    String? helperText,
-    ValueChanged<String>? onChanged,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: TextField(
-        controller: controller,
-        onChanged: onChanged,
-        obscureText: obscureText,
-        readOnly: readOnly,
-        maxLines: obscureText ? 1 : maxLines,
-        decoration: InputDecoration(
-          border: const OutlineInputBorder(),
-          prefixIcon: Icon(icon),
-          labelText: label,
-          helperText: helperText,
-          helperMaxLines: 6,
-        ),
-      ),
+  Future<void> _revokeSitePermission(String origin) async {
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Revoke site permission?'),
+            content: Text(
+              '$origin will no longer be able to request protected browser capabilities. Any active pairing is revoked when the browser configuration updates.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Revoke'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed || !mounted) return;
+
+    final external = SignerPolicy.normalizeOrigin(widget.config.flightDeckUrl);
+    final legacyTower = SignerPolicy.normalizeOrigin(widget.config.towerUrl);
+    final trustedOrigins = _trustedOrigins
+        .where((value) => SignerPolicy.normalizeOrigin(value) != origin)
+        .toList(growable: false);
+    final next = widget.config.copyWith(
+      trustedOrigins: trustedOrigins,
+      flightDeckUrl: origin == external ? '' : widget.config.flightDeckUrl,
+      towerUrl: origin == legacyTower ? '' : widget.config.towerUrl,
     );
+    if (origin == external) _flightDeckController.clear();
+    setState(() {
+      _trustedOrigins = trustedOrigins;
+      _message = 'Permission revoked for $origin.';
+    });
+    widget.onConfigChanged(next);
   }
 
-  void _save() {
-    final origins = _trustedOriginsController.text
-        .split('\n')
-        .map((line) => line.trim())
-        .where((line) => line.isNotEmpty)
-        .toList(growable: false);
-    widget.onConfigChanged(_currentConfig().copyWith(trustedOrigins: origins));
+  void _saveExternalFlightDeck() {
+    final value = _flightDeckController.text.trim();
+    final nextOrigin = SignerPolicy.normalizeOrigin(value);
+    if (value.isNotEmpty && nextOrigin.isEmpty) {
+      setState(() {
+        _message = 'Enter a complete http:// or https:// Flight Deck URL.';
+      });
+      return;
+    }
+
+    final previousOrigin =
+        SignerPolicy.normalizeOrigin(widget.config.flightDeckUrl);
+    final changed = value != widget.config.flightDeckUrl;
+    final trustedOrigins = changed && previousOrigin.isNotEmpty
+        ? _trustedOrigins
+            .where(
+              (entry) => SignerPolicy.normalizeOrigin(entry) != previousOrigin,
+            )
+            .toList(growable: false)
+        : List<String>.of(_trustedOrigins);
     setState(() {
-      _message = 'Configuration saved. For Tower FIPS sync, reload your '
-          'existing Flight Deck tab, then select FIPS and approve pairing.';
+      _trustedOrigins = trustedOrigins;
+      _message = changed
+          ? 'External Flight Deck updated. Previous pairings were revoked.'
+          : 'External Flight Deck is unchanged.';
     });
+    widget.onConfigChanged(
+      widget.config.copyWith(
+        flightDeckUrl: value,
+        trustedOrigins: trustedOrigins,
+      ),
+    );
   }
 
   Future<void> _setRelayDiagnostics(bool enabled) async {
@@ -816,42 +782,6 @@ class _SetupScreenState extends State<SetupScreen> {
     } finally {
       if (mounted) setState(() => _relayBusy = false);
     }
-  }
-
-  AppConfig _currentConfig() {
-    return widget.config.copyWith(
-      towerUrl: _towerController.text.trim(),
-      appNpub: _appNpubController.text.trim(),
-      flightDeckUrl: _flightDeckController.text.trim(),
-      workspaceId: _workspaceController.text.trim(),
-      workspaceServiceNpub: _workspaceServiceController.text.trim(),
-      channelId: _channelController.text.trim(),
-      deviceNpub: widget.config.deviceNpub,
-      deviceSecret: widget.config.deviceSecret,
-      registrationSecret: _registrationSecretController.text.trim(),
-      rememberNip98Approvals: _rememberNip98Approvals,
-      devicePublicKeyHex: widget.config.devicePublicKeyHex,
-      displayExperimentalFlightDeckDriveSync:
-          _displayExperimentalFlightDeckDriveSync,
-    );
-  }
-
-  Future<void> _registerDevice() async {
-    _save();
-    await _run('Registering device...', () async {
-      final result = await widget.bridge.registerDevice(_currentConfig());
-      if (!result.ok) return 'Device registration failed: ${result.error}';
-      return 'Device registered with Tower.';
-    });
-  }
-
-  Future<void> _validateChannel() async {
-    _save();
-    await _run('Validating channel...', () async {
-      final result = await widget.bridge.validateChannel(_currentConfig());
-      if (!result.ok) return 'Channel validation failed: ${result.error}';
-      return 'Channel validated.';
-    });
   }
 
   Future<void> _resetBrowserData() async {

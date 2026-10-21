@@ -165,14 +165,13 @@ class _ShellHomeState extends State<ShellHome> {
             ),
           ),
           _surfaceScaffold(
-            title: 'Setup',
+            title: 'Settings',
             child: SetupScreen(
               config: widget.config,
               relayDiagnosticsSaved: widget.relayDiagnosticsSaved,
               relayDiagnosticsAtLaunch: widget.relayDiagnosticsAtLaunch,
               onRelayDiagnosticsChanged: widget.onRelayDiagnosticsChanged,
               localFlightDeckUrl: widget.localFlightDeckUrl,
-              bridge: widget.bridge,
               fipsRuntime: _fipsRuntime,
               onConfigChanged: widget.onConfigChanged,
               onClearBrowserData: _clearBrowserData,
@@ -362,7 +361,7 @@ class _ShellHomeState extends State<ShellHome> {
     } catch (_) {
       status = const FipsRuntimeStatus(
         state: FipsRuntimeState.failed,
-        detail: 'Embedded FIPS failed unexpectedly. Open Setup to retry.',
+        detail: 'Embedded FIPS failed unexpectedly. Open Settings to retry.',
       );
     }
     if (status.canAttemptAppAccess) {
@@ -383,7 +382,7 @@ class _ShellHomeState extends State<ShellHome> {
               TextButton(
                 key: const ValueKey('fips-failure-open-setup'),
                 onPressed: () => _selectSurface(ShellSurface.setup),
-                child: const Text('Setup'),
+                child: const Text('Settings'),
               ),
           ],
         ),
@@ -574,7 +573,7 @@ class _AvatarMenu extends StatelessWidget {
           value: _AvatarMenuAction.setup,
           child: ListTile(
             leading: Icon(Icons.tune),
-            title: Text('Setup'),
+            title: Text('Settings'),
           ),
         ),
         const PopupMenuItem(

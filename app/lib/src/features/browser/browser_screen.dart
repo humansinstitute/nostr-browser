@@ -4659,7 +4659,7 @@ class _BrowserAvatarMenu extends StatelessWidget {
           value: _BrowserAvatarAction.setup,
           child: ListTile(
             leading: Icon(Icons.tune),
-            title: Text('Setup'),
+            title: Text('Settings'),
           ),
         ),
         const PopupMenuItem(
