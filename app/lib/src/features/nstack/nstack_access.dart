@@ -607,15 +607,10 @@ String normalizeNStackOrigin(String value) {
   final local = {'localhost', '127.0.0.1', '::1', 'wingman.local'}
       .contains(uri.host.toLowerCase());
   if (scheme != 'https' && !(scheme == 'http' && local)) return '';
-  return uri
-      .replace(
-        scheme: scheme,
-        host: uri.host.toLowerCase(),
-        path: '',
-        query: '',
-        fragment: '',
-      )
-      .toString();
+  // Must equal the page's `location.origin`; the injected provider refuses to
+  // install for any other value. `Uri.replace(query: '', fragment: '')` would
+  // serialize an empty query and fragment as `?#`.
+  return uri.origin;
 }
 
 extension _FirstOrNull<T> on Iterable<T> {
