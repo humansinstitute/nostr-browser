@@ -2057,7 +2057,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Create identity / Import key'));
     await tester.pumpAndSettle();
-    expect(find.text('Set Up Wingman Signer'), findsOneWidget);
+    expect(find.text('Set Up Nostr Browser'), findsOneWidget);
     expect(find.text('Create identity'), findsOneWidget);
     await tester.tap(find.text('Import key'));
     await tester.pumpAndSettle();

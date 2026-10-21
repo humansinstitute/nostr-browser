@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'ios'))
-from appstore_connect import Client, APP, BUNDLE, owner_file
+from appstore_connect import Client, APP, BUNDLE, GROUP, owner_file
 import testflight_api_release as api
 import testflight_release as release
 import nightly_testflight as nightly
@@ -116,7 +116,7 @@ class AppleTests(unittest.TestCase):
 
     def test_audience_pins_manual_private_and_no_public_link(self):
         c=client()
-        group={'id':'private', 'attributes':{'name':'Private Internal','isInternalGroup':True,
+        group={'id':'private', 'attributes':{'name':GROUP,'isInternalGroup':True,
             'publicLinkEnabled':None,'publicLink':None,'hasAccessToAllBuilds':False}}
         def setup(): c.all=Mock(side_effect=[[group],[{'id':'tester'}]])
         setup(); self.assertTrue(c.audience()['manual_distribution'])
@@ -148,13 +148,15 @@ class AppleTests(unittest.TestCase):
 class RunnerTests(unittest.TestCase):
     def test_reservation_uses_upload_version_and_local_number(self):
         c=client(); history(c,[upload('30','0.2.0','COMPLETE')]);c.audience=Mock(return_value={})
-        with tempfile.TemporaryDirectory() as d, patch.object(release,'PRIVATE',Path(d)), patch.object(api,'local_states',return_value=iter([(Path(d)/'old/state.json',{'build':40,'stage':'initialized'})])):
+        source={'nbrowser':'a'*40,'flightdeck':'b'*40}
+        with tempfile.TemporaryDirectory() as d, patch.object(release,'PRIVATE',Path(d)), patch.object(api,'local_states',return_value=iter([(Path(d)/'old/state.json',{'build':40,'stage':'initialized'})])), patch.object(api,'require_daily_claim',return_value={'source':source}):
             s=api.reserve(release,Path(d)/'new',c)
             self.assertEqual((s['build'],s['version']),(41,'0.2.0'))
+            self.assertEqual(s['source'],source)
 
     def test_pending_barriers_do_not_create_reservation(self):
         c=client();history(c,[upload()]);c.audience=Mock(return_value={})
-        with tempfile.TemporaryDirectory() as d, patch.object(release,'PRIVATE',Path(d)):
+        with tempfile.TemporaryDirectory() as d, patch.object(release,'PRIVATE',Path(d)), patch.object(api,'require_daily_claim',return_value={'source':{'nbrowser':'a'*40,'flightdeck':'b'*40}}):
             run=Path(d)/'new'
             with self.assertRaises(ValueError):api.reserve(release,run,c)
             self.assertFalse(run.exists())
@@ -249,8 +251,9 @@ class RunnerTests(unittest.TestCase):
     def test_build_requires_app_identity_before_any_snapshot(self):
         c=client()
         with tempfile.TemporaryDirectory() as d:
+            source={'nbrowser':'a'*40,'flightdeck':'b'*40}
             run=Path(d);release.write(run/'state.json',{'api':True,'app_id':APP,'audience':'internal',
-                'build':11,'version':'0.1.7','stage':'initialized'})
+                'build':11,'version':'0.1.7','stage':'initialized','source':source})
             a=SimpleNamespace(action='api-build',auth_reference='unused')
             with patch.object(api,'Client',return_value=c), patch.object(api,'require_daily_claim'), patch.object(release,'project_settings'), patch.dict(os.environ,{},clear=True), patch.object(api,'snapshot') as snapshot:
                 with self.assertRaises(ValueError):api.execute(release,a,run)
@@ -261,8 +264,9 @@ class RunnerTests(unittest.TestCase):
         c=client();c.preflight=Mock(return_value={'versions':[{'attributes':{'platform':'IOS','version':'0.1.7'}}], 'pending_upload_ids':[],'builds':[build()],'uploads':[]})
         c.xcode_args=Mock(return_value=[])
         with tempfile.TemporaryDirectory() as d:
+            source={'nbrowser':'a'*40,'flightdeck':'a'*40}
             run=Path(d);release.write(run/'state.json',{'api':True,'app_id':APP,'audience':'internal',
-                'build':11,'version':'0.1.7','stage':'initialized'})
+                'build':11,'version':'0.1.7','stage':'initialized','source':source})
             a=SimpleNamespace(action='api-build',auth_reference='unused',flightdeck=Path('/fd'))
             actions=[]
             def snapshot(r,repo,target):
@@ -281,11 +285,17 @@ class RunnerTests(unittest.TestCase):
                     shutil.copytree(run/'flightdeck/dist',run/'wmapp/app/assets/flightdeck')
                 return SimpleNamespace(returncode=0)
             def signatures(*args):actions.append('signed-both-targets')
-            with patch.object(api,'Client',return_value=c), patch.object(api,'require_daily_claim'), patch.object(api,'delivery_barrier'), patch.object(release,'project_settings'), patch.dict(os.environ,{'FLIGHT_DECK_PG_APP_NPUB':'verified-fixture'}), patch.object(api,'snapshot',side_effect=snapshot), patch.object(release,'command',return_value=b'100'), patch.object(api.subprocess,'run',side_effect=run_command), patch.object(release,'signed_app',side_effect=signatures), patch.object(release,'validate_artifacts',return_value={'sha256':'fixture'}):
+            def command(args):
+                if 'remote' in args:
+                    return release.SOURCE_REPOSITORY.encode()
+                return b'100'
+            with patch.object(api,'Client',return_value=c), patch.object(api,'require_daily_claim'), patch.object(api,'delivery_barrier'), patch.object(release,'project_settings'), patch.dict(os.environ,{'FLIGHT_DECK_PG_APP_NPUB':'verified-fixture'}), patch.object(nightly,'source_identity',return_value=source), patch.object(api,'snapshot',side_effect=snapshot), patch.object(release,'command',side_effect=command), patch.object(api.subprocess,'run',side_effect=run_command), patch.object(release,'signed_app',side_effect=signatures), patch.object(release,'validate_artifacts',return_value={'sha256':'fixture'}):
                 api.execute(release,a,run)
             self.assertLess(actions.index('bun run verify:dist'),actions.index('snapshot-wmapp'))
             self.assertLess(actions.index('signed-both-targets'),next(i for i,x in enumerate(actions) if '-exportArchive' in x))
             self.assertEqual(release.read(run/'state.json')['stage'],'exported')
+            self.assertEqual(release.read(run/'state.json')['source_repository'],
+                             release.SOURCE_REPOSITORY)
 
     def test_reconciliation_evidence_and_local_state_hash_drift(self):
         import hashlib
@@ -303,13 +313,35 @@ class RunnerTests(unittest.TestCase):
             proof.write_text('{}')
             with self.assertRaises(ValueError):c.evidence(rule)
 
+    def test_completed_delivery_reconciliation_requires_exact_terminal_readback(self):
+        import hashlib
+        c=client()
+        with tempfile.TemporaryDirectory() as d, patch.object(nightly,'safe_private'):
+            root=Path(d).resolve();run=root/'build14';run.mkdir();state=run/'state.json'
+            value={'app_id':APP,'version':'0.1.7','build':14,'stage':'api_testing',
+                   'api_readback':{'build_id':'build-id','internal_status':'IN_BETA_TESTING'}}
+            release.write(state,value);digest=hashlib.sha256(state.read_bytes()).hexdigest()
+            delivered={'state_sha256':digest,'app_id':APP,'version':'0.1.7','build':14,
+                       'stage':'api_testing','build_id':'build-id','internal_status':'IN_BETA_TESTING'}
+            proof=root/'proof';proof.write_text(json.dumps({'schema':1,'app_id':APP,
+                'basis':'reviewed_inactive_legacy_reservations','delivered_local_runs':{'build14':delivered}}));proof.chmod(0o600)
+            rule={'state_sha256':digest,'evidence_path':str(proof),
+                  'evidence_sha256':hashlib.sha256(proof.read_bytes()).hexdigest()}
+            c.config['reconciled_local_runs']={'build14':rule}
+            self.assertTrue(c.local_reconciled(state))
+            delivered['internal_status']='READY_FOR_BETA_TESTING'
+            proof.write_text(json.dumps({'schema':1,'app_id':APP,
+                'basis':'reviewed_inactive_legacy_reservations','delivered_local_runs':{'build14':delivered}}))
+            rule['evidence_sha256']=hashlib.sha256(proof.read_bytes()).hexdigest()
+            with self.assertRaises(ValueError):c.local_reconciled(state)
+
     def test_daily_mutation_requires_exact_owner_active_day(self):
         with tempfile.TemporaryDirectory() as d, patch.object(nightly,'PRIVATE',Path(d)), patch.object(nightly,'safe_private'), patch.dict(os.environ,{'SESSION_ID':'owner'}):
             day=dt.datetime.now(nightly.ZoneInfo('Australia/Perth')).date().isoformat()
-            p=Path(d)/'ledger.json';p.write_text(json.dumps({'schema':1,'days':{day:{'owner':'other','status':'active'}}}))
+            p=Path(d)/'ledger.json';p.write_text(json.dumps({'schema':2,'days':{day:{'attempts':[{'owner':'other','status':'active'}]}}}))
             with self.assertRaises(ValueError):api.require_daily_claim()
-            p.write_text(json.dumps({'schema':1,'days':{day:{'owner':'owner','status':'active'}}}));api.require_daily_claim()
-            p.write_text(json.dumps({'schema':1,'days':{day:{'owner':'owner','status':'testing'}}}))
+            p.write_text(json.dumps({'schema':2,'days':{day:{'attempts':[{'owner':'owner','status':'active'}]}}}));api.require_daily_claim()
+            p.write_text(json.dumps({'schema':2,'days':{day:{'attempts':[{'owner':'owner','status':'testing'}]}}}))
             with self.assertRaises(ValueError):api.require_daily_claim()
 
 if __name__=='__main__':unittest.main()

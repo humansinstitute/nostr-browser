@@ -113,22 +113,30 @@ def recover(r, client, run, s, a):
     from nightly_testflight import PRIVATE, recover_claim, safe_private
     safe_private(PRIVATE / 'ledger.json')
     safe_private(run / 'export-recovery.json')
-    require(a.export_logs and a.previous_owner, 'Recovery requires retained export logs and previous owner.')
+    require(a.export_logs, 'Recovery requires retained export logs.')
     require(not (run / 'export-recovery.json').exists(), 'Recovery already recorded; resume upload/readback.')
     proof = export_proof(r, run, s, a.export_logs)
     h = client.preflight()
     proof['reservation'] = recovery_history(r, client, h, s, proof)
     from testflight_api_release import delivery_barrier
     delivery_barrier(r, run, client); r.no_other_delivery(run, s)
-    proof['stopped_session'] = stopped_session(a.previous_owner)
+    if a.previous_owner:
+        proof['stopped_session'] = stopped_session(a.previous_owner)
+        claim_mode = 'transferred_failed_claim'
+    else:
+        from testflight_api_release import require_daily_claim
+        require_daily_claim(run, 'api-upload')
+        claim_mode = 'current_active_claim'
     proof.update(schema=1, app_id=APP, basis='same_run_native_export_reservation',
-                 run=run.name, state_sha256=r.digest(run / 'state.json'), observed_at=r.now())
+                 run=run.name, claim_mode=claim_mode,
+                 state_sha256=r.digest(run / 'state.json'), observed_at=r.now())
     # Record proof first; an interrupted claim handoff must be reconciled, never retried blindly.
     r.write(run / 'export-recovery.json', proof)
-    recover_claim(PRIVATE, os.environ.get('SESSION_ID'), a.previous_owner, run.name,
-                  proof['state_sha256'])
+    if a.previous_owner:
+        recover_claim(PRIVATE, os.environ.get('SESSION_ID'), a.previous_owner, run.name,
+                      proof['state_sha256'])
     print(json.dumps({'recovered_run': run.name, 'upload_id': proof['upload_id'],
-                      'upload_performed': False}, indent=2))
+                      'claim_mode': claim_mode, 'upload_performed': False}, indent=2))
 
 
 def upload_gate(r, client, run, s, h):

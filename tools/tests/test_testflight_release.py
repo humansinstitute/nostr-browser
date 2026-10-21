@@ -19,7 +19,9 @@ SPEC.loader.exec_module(r)
 
 class ReleaseTests(unittest.TestCase):
     def setUp(self):
-        self.s = {'schema': 1, 'version': '0.1.7', 'build': 9, 'stage': 'initialized', 'app_id': '123'}
+        self.s = {'schema': 1, 'version': '0.1.7', 'build': 9,
+                  'stage': 'initialized', 'app_id': '123',
+                  'source_commit': 'a' * 40}
         self.o = {'observed_at': r.now(), 'xcode_gui_account_present': True,
                   'team': r.TEAM, 'bundle': r.BUNDLE, 'app_id': '123',
                   'existing_builds': [8], 'history_complete': True, 'latest_version': '0.1.6',
@@ -103,7 +105,11 @@ class ReleaseTests(unittest.TestCase):
 
     def test_profile_validation_both_targets(self):
         for bundle in [r.BUNDLE, r.BUNDLE + '.FipsPacketTunnel']:
-            info = dict(CFBundleIdentifier=bundle, CFBundleShortVersionString='0.1.7', CFBundleVersion='9')
+            info = dict(CFBundleIdentifier=bundle,
+                        CFBundleShortVersionString='0.1.7',
+                        CFBundleVersion='9',
+                        NBrowserSourceCommit='a' * 40,
+                        NBrowserSourceRepository=r.SOURCE_REPOSITORY)
             ent = {'application-identifier': r.TEAM + '.' + bundle,
                    'com.apple.developer.team-identifier': r.TEAM, 'get-task-allow': False,
                    'beta-reports-active': True, 'com.apple.developer.networking.networkextension': ['packet-tunnel-provider']}
@@ -118,6 +124,9 @@ class ReleaseTests(unittest.TestCase):
                     r.profile_check(info, profile, dict(ent, **change), self.s, bundle)
             with self.assertRaisesRegex(ValueError, 'stale artifact'):
                 r.profile_check(dict(info, CFBundleVersion='8'), profile, ent, self.s, bundle)
+            with self.assertRaisesRegex(ValueError, 'source provenance'):
+                r.profile_check(dict(info, NBrowserSourceCommit='b' * 40),
+                                profile, ent, self.s, bundle)
 
     def test_dry_run_no_build_or_state_change(self):
         with tempfile.TemporaryDirectory() as tmp:

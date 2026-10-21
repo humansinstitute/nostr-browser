@@ -59,7 +59,7 @@ class WelcomeSurface extends StatelessWidget {
                                       const Icon(Icons.explore_outlined,
                                           color: Color(0xFFC45D16), size: 24),
                                       const SizedBox(width: 10),
-                                      Text('WINGMAN',
+                                      Text('Nostr Browser',
                                           style: theme.textTheme.labelLarge
                                               ?.copyWith(
                                                   color:
@@ -88,6 +88,7 @@ class WelcomeLoadingScreen extends StatelessWidget {
         const Text('Preparing your local identity…'),
         const SizedBox(height: 24),
         Semantics(
-            label: 'Loading Wingman', child: const LinearProgressIndicator()),
+            label: 'Loading Nostr Browser',
+            child: const LinearProgressIndicator()),
       ]));
 }

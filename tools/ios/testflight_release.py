@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PRIVATE = ROOT / 'tmp/docs/handoffs/testflight'
 TEAM = os.environ.get('WMAPP_APPLE_TEAM', '')
 BUNDLE = 'com.wingmanbefree.wingmanApp'
+SOURCE_REPOSITORY = 'https://github.com/humansinstitute/nostr-browser.git'
 GROUP = os.environ.get('WMAPP_TESTFLIGHT_PRIVATE_GROUP', 'Private Internal')
 OPTIONS = ROOT / 'docs/deploy/TestFlightExportOptions.plist'
 EXTERNAL_OPTIONS = ROOT / 'docs/deploy/TestFlightExternalExportOptions.plist'
@@ -160,6 +161,9 @@ def command(args):
 def profile_check(info, profile, ent, s, bundle, distribution=True):
     require(info['CFBundleIdentifier'] == bundle, 'Signed bundle mismatch.')
     require(info['CFBundleShortVersionString'] == s['version'] and str(info['CFBundleVersion']) == str(s['build']), 'Signed version/build mismatch; stale artifact.')
+    require(info.get('NBrowserSourceCommit') == s.get('source_commit') and
+            info.get('NBrowserSourceRepository') == SOURCE_REPOSITORY,
+            'Signed bundle lacks exact canonical NBrowser source provenance.')
     require(profile['TeamIdentifier'] == [TEAM] and ent.get('com.apple.developer.team-identifier') == TEAM, 'Signed team mismatch.')
     require(profile['ExpirationDate'].replace(tzinfo=dt.timezone.utc) > dt.datetime.now(dt.timezone.utc), 'Provisioning profile expired.')
     pe = profile['Entitlements']

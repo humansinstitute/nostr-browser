@@ -49,25 +49,25 @@ The optional private reference fields `inactive_uploads` and
 `build`, `created_at`, `evidence_path`, and `evidence_sha256`; each local run rule
 has `state_sha256` and the two evidence fields. Evidence schema 1 pins `app_id`,
 `basis: reviewed_inactive_legacy_reservations`, `inactive_uploads` (IDs mapped to
-exact version/build/creation facts) and `cancelled_local_runs` (run names mapped
-to state hashes). An operator must establish the cancellation facts before
-creating a rule; an empty file list alone does not establish cancellation.
+exact version/build/creation facts), `cancelled_local_runs` (run names mapped to
+state hashes), and optional `delivered_local_runs`. A delivered-run entry pins
+the exact state hash, app, version, build, local terminal stage, Apple build ID,
+and internal status; only `api_testing` and `api_action_required` qualify. This
+allows a known completed delivery to stop blocking newer source without calling
+the build Testing or erasing a compliance action. An operator must establish
+the cancellation or completed-delivery facts before creating a rule; an empty
+file list, elapsed time, or a newer build alone establishes neither.
 
 ## Release execution contract
 
 1. Set a session completion goal and `nextAction=reflect`. Read the task and
    complete current thread, latest comments, all repository agent guides and
    the current release-tool implementation before acting.
-2. Run `"$RELEASE_VENV/bin/python" tools/ios/nightly_testflight.py claim`. Save the returned Perth
-   day. Duplicate daily claims and any prior active claim fail closed, even
-   for the same session. A crash never automatically expires a claim. The
-   operator reconciles its session, Apple receipts and run state before any
-   explicitly authorized repair. Do not edit the ledger to bypass a gate.
-3. Inspect both working trees, staged changes, branch and upstream. Default
+2. Inspect both working trees, staged changes, branch and upstream. Default
    to `main`; stop on another branch, conflicts, incompatible work or moving
    inputs. Preserve unrelated and concurrent files. Never stash, reset,
    rebase, force-push or bypass hooks.
-4. Flight Deck comes first. Review all compatible nonignored software and
+3. Flight Deck comes first. Review all compatible nonignored software and
    reusable documentation, run focused tests and required public-source,
    unit, release-note, build and distribution checks. Follow its release-note
    numbering rules for source changes. Build in an isolated snapshot with
@@ -77,10 +77,18 @@ creating a rule; an empty file list alone does not establish cancellation.
    Push the configured authoritative upstream only as a normal fast-forward
    when safely permitted; divergence/auth failures are blockers, never a reason
    to substitute stale remote source for the newer local commit.
-5. Validate WMAPP analysis/tests sequentially and release tooling tests. Review
+4. Validate NBrowser analysis/tests sequentially and release tooling tests. Review
    and commit all compatible tested nonignored source/docs on `main`, checking
    for concurrent edits before committing. Ignore operational evidence and
    generated bundles. Never stage everything without inspecting the candidates.
+5. After both validated source checkpoints are committed and stable, run
+   `"$RELEASE_VENV/bin/python" tools/ios/nightly_testflight.py claim`. The helper
+   pins the exact clean NBrowser and Flight Deck commits. Save the returned
+   Perth day and source pair. An active claim fails closed globally. A finished
+   same-day attempt blocks the same source pair, but a later attempt may claim
+   genuinely newer committed source. Legacy same-day claims without pinned
+   source require explicit reconciliation. A crash never expires a claim;
+   uncertain delivery retains it.
 6. Check authentication and release gates before expensive packaging. Run
    `nightly_testflight.py dry-run` with the private virtual environment. On
    failure report the exact prerequisite and both source commits, finish as
@@ -94,15 +102,17 @@ creating a rule; an empty file list alone does not establish cancellation.
    current Perth daily claim. All API actions reject `--dry-run`; `api-preflight`
    is read-only.
    Never reuse uncertain numbers or re-upload a pending delivery.
-8. Create isolated snapshots of the exact committed Flight Deck and WMAPP trees
+8. Create isolated snapshots of the exact committed Flight Deck and NBrowser trees
    under ignored private evidence. Use `git archive` or a private local clone;
    never build the shared working copy. Install frozen Flight Deck dependencies,
    set `FLIGHT_DECK_PG_APP_NPUB` to the verified Flight Deck app identity from
    the scoped Flight Deck context (local overrides do not set it automatically),
    pin `FLIGHTDECK_BUILD_NUMBER`, `FLIGHTDECK_BUILD_ID`, `SOURCE_DATE_EPOCH`,
    build and verify `dist`, then pass that snapshot through `FLIGHT_DECK_DIR`
-   to the existing WMAPP release workflow. Record commit, version/build and
-   asset hashes. Keep generated output in the snapshot, not shared tracked files.
+   to the existing NBrowser release workflow. Record commit, version/build and
+   asset hashes. The archive and IPA must embed the canonical NBrowser Git
+   repository and exact source commit in both signed targets. Keep generated
+   output in the snapshot, not shared tracked files.
 9. Run `testflight_release.py api-build --run <unique-name>` to perform the
    isolated FD-first build and export; then `api-upload` once. Use its barriers
    and signing checks for Runner and Packet Tunnel. Validate the exact exported artifact, archive, profiles, entitlements,
@@ -123,7 +133,8 @@ creating a rule; an empty file list alone does not establish cancellation.
     required or failure; never call a receipt or IPA a published release.
 11. Write one readable result on the originating task and same thread, including
     commits, FD build/assets, Apple build/receipt if any and exact blocker/status.
-    Finish with the exact claimed `--day` and `--result blocked_auth|failed|processing|testing`.
+    Finish with the exact claimed `--day` and
+    `--result blocked_auth|failed|processing|action_required|testing`.
     Set `nextAction=stop` only after reporting and handoff. If reporting or upload
     outcome is uncertain, retain the active claim for reconciliation.
 
@@ -143,7 +154,8 @@ git diff --check
 The dry run reads branches, commits, status and upstream configuration, checks
 required tool availability and the private storage boundary, and reports actual
 auth readiness. It never claims a real day, changes a release state or uploads.
-Guard tests exercise duplicate claims, overlapping days, owner-only completion
+Guard tests exercise source-aware same-day claims, duplicate source claims,
+overlapping days, owner-only completion
 and failure-closed outcomes using temporary fixtures. Read back the live enabled
 schedule, timezone, next run, identity, paths and full reporting contract after
 activation; do not manually fire a duplicate release merely to test scheduling.
@@ -171,8 +183,15 @@ ownership. Preserve the native `.xcdistributionlogs` bundle named in that run's
 `export.log` under ignored operational storage, without changing its bytes or
 file timestamps; make the retained log files owner-only.
 
+When the same active claim owns the run, use:
+
+```sh
+"$RELEASE_VENV/bin/python" tools/ios/testflight_release.py api-recover-export \
+  --run "$RUN" --export-logs "$RETAINED_NATIVE_EXPORT_LOGS"
+```
+
 For an explicitly authorized immediate release whose worker is archived and
-whose current Perth-day claim finished `failed`, use:
+whose current Perth-day claim finished `failed`, transfer that exact claim with:
 
 ```sh
 "$RELEASE_VENV/bin/python" tools/ios/testflight_release.py api-recover-export \
@@ -184,7 +203,8 @@ This command uploads nothing. It verifies the successful private export policy,
 exact native creation request and `201 Created` reservation ID, absence of
 subsequent native activity, original complete preflight, signed retained IPA
 with `TFInternalTestingOnly=true`, archive/IPA hashes, fresh complete Apple
-history and empty reservation files. Any unrelated pending upload, processing
+history and empty reservation files. The same-owner route verifies the current
+active claim without replacing it. Any unrelated pending upload, processing
 build, existing exact build, higher reservation, prior upload intent, changed
 proof or uncertain evidence blocks recovery. It reads the prior worker's archive
 through the supported session CLI and transfers only its exact failed current-day

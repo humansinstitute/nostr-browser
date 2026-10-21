@@ -170,10 +170,23 @@ class Client:
         if not rule:
             return False
         raw = owner_file(path).read_bytes()
-        require(hashlib.sha256(raw).hexdigest() == rule['state_sha256'], 'Reconciled local state changed.')
+        state_sha256 = hashlib.sha256(raw).hexdigest()
+        require(state_sha256 == rule['state_sha256'], 'Reconciled local state changed.')
         proof = self.evidence(rule)
-        require(proof.get('cancelled_local_runs', {}).get(path.parent.name) == rule['state_sha256'],
-                'Missing exact local cancellation evidence.')
+        cancelled = proof.get('cancelled_local_runs', {}).get(path.parent.name)
+        delivered = proof.get('delivered_local_runs', {}).get(path.parent.name)
+        if cancelled is not None:
+            require(cancelled == state_sha256, 'Missing exact local cancellation evidence.')
+        else:
+            state = json.loads(raw)
+            readback = state.get('api_readback', {})
+            expected = {'state_sha256': state_sha256, 'app_id': state.get('app_id'),
+                        'version': state.get('version'), 'build': state.get('build'),
+                        'stage': state.get('stage'), 'build_id': readback.get('build_id'),
+                        'internal_status': readback.get('internal_status')}
+            require(state.get('stage') in ('api_action_required', 'api_testing') and
+                    isinstance(readback.get('build_id'), str) and delivered == expected,
+                    'Missing exact completed-delivery reconciliation evidence.')
         return True
 
     def audience(self):

@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[2]
 PRIVATE = ROOT / 'tmp/docs/handoffs/nightly-testflight'
+SCHEMA = 2
 
 
 def git(repo, *args):
@@ -38,8 +39,52 @@ def save(path, value):
     temp.replace(path)
 
 
-def transition(directory, action, owner, day, result=None):
-    """Serialize claim/finish; a crashed active claim needs explicit reconciliation."""
+def source_identity(fd):
+    """Return the exact clean committed source pair that a claim authorizes."""
+    source = {}
+    for name, repo in [('nbrowser', ROOT), ('flightdeck', Path(fd))]:
+        if git(repo, 'branch', '--show-current') != 'main':
+            raise ValueError('Nightly source claims require main in both repositories.')
+        if git(repo, 'status', '--porcelain'):
+            raise ValueError('Commit compatible source before claiming its release.')
+        source[name] = git(repo, 'rev-parse', 'HEAD')
+    return source
+
+
+def _valid_source(source):
+    return (isinstance(source, dict) and set(source) == {'nbrowser', 'flightdeck'} and
+            all(isinstance(value, str) and len(value) == 40 and
+                all(char in '0123456789abcdef' for char in value) for value in source.values()))
+
+
+def _ledger(value):
+    """Read legacy ledgers without discarding history; writes upgrade to schema 2."""
+    if value.get('schema') == SCHEMA and isinstance(value.get('days'), dict):
+        ledger = value
+    elif value.get('schema') == 1 and isinstance(value.get('days'), dict):
+        ledger = {'schema': SCHEMA, 'days': {
+            day: {'attempts': [dict(entry)]} for day, entry in value['days'].items()
+        }}
+    else:
+        raise ValueError('Unsupported nightly ledger.')
+    if any(not isinstance(record, dict) or not isinstance(record.get('attempts'), list) or
+           not record['attempts'] for record in ledger['days'].values()):
+        raise ValueError('Invalid nightly ledger history.')
+    return ledger
+
+
+def active_claim(ledger, day=None):
+    active = [(record_day, attempt) for record_day, record in ledger.get('days', {}).items()
+              for attempt in record.get('attempts', []) if attempt.get('status') == 'active']
+    if len(active) > 1:
+        raise ValueError('Multiple active nightly claims require reconciliation.')
+    if not active or (day is not None and active[0][0] != day):
+        return None
+    return active[0][1]
+
+
+def transition(directory, action, owner, day, result=None, source=None):
+    """Serialize source-aware claims; a crashed active claim needs reconciliation."""
     if not owner:
         raise ValueError('A session owner is required.')
     if directory.is_symlink() or any((directory / name).is_symlink()
@@ -49,25 +94,34 @@ def transition(directory, action, owner, day, result=None):
     with (directory / '.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         path = directory / 'ledger.json'
-        ledger = json.loads(path.read_text()) if path.exists() else {'schema': 1, 'days': {}}
-        if ledger.get('schema') != 1:
-            raise ValueError('Unsupported nightly ledger.')
+        ledger = _ledger(json.loads(path.read_text())) if path.exists() else {'schema': SCHEMA, 'days': {}}
         days = ledger['days']
         if action == 'claim':
-            if day in days:
-                raise ValueError('This Perth day is already claimed; do not repeat its release or report.')
-            if any(v['status'] == 'active' for v in days.values()):
+            if not _valid_source(source):
+                raise ValueError('Claim requires exact committed NBrowser and Flight Deck source.')
+            if active_claim(ledger):
                 raise ValueError('Another nightly release is active; reconcile it before another run. No automatic expiry.')
-            days[day] = {'owner': owner, 'status': 'active', 'started_at': dt.datetime.now(dt.timezone.utc).isoformat()}
+            record = days.setdefault(day, {'attempts': []})
+            attempts = record['attempts']
+            if any(attempt.get('source') is None for attempt in attempts):
+                raise ValueError('This Perth day has a legacy claim without pinned source; reconcile it explicitly.')
+            if any(attempt.get('source') == source for attempt in attempts):
+                raise ValueError('This exact committed source is already claimed for the Perth day; do not duplicate it.')
+            attempts.append({'owner': owner, 'status': 'active', 'source': dict(source),
+                             'started_at': dt.datetime.now(dt.timezone.utc).isoformat()})
+            entry = attempts[-1]
         else:
-            entry = days.get(day)
-            if not entry or entry['owner'] != owner or entry['status'] != 'active':
+            attempts = days.get(day, {}).get('attempts', [])
+            matches = [attempt for attempt in attempts
+                       if attempt.get('owner') == owner and attempt.get('status') == 'active']
+            if len(matches) != 1:
                 raise ValueError('Only the active claim owner can finish this day.')
-            if result not in ('blocked_auth', 'failed', 'processing', 'testing'):
+            entry = matches[0]
+            if result not in ('blocked_auth', 'failed', 'processing', 'action_required', 'testing'):
                 raise ValueError('An explicit release outcome is required.')
             entry.update(status=result, finished_at=dt.datetime.now(dt.timezone.utc).isoformat())
         save(path, ledger)
-        return {'day': day, **days[day]}
+        return {'day': day, 'attempt': days[day]['attempts'].index(entry) + 1, **entry}
 
 
 def recover_claim(directory, owner, previous_owner, run, state_sha256):
@@ -80,21 +134,24 @@ def recover_claim(directory, owner, previous_owner, run, state_sha256):
     with (directory / '.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         path = directory / 'ledger.json'
-        ledger = json.loads(path.read_text())
-        entry = ledger.get('days', {}).get(day)
-        if ledger.get('schema') != 1 or not entry or entry.get('owner') != previous_owner or entry.get('status') != 'failed' or any(v.get('status') == 'active' for v in ledger['days'].values()):
+        ledger = _ledger(json.loads(path.read_text()))
+        attempts = ledger.get('days', {}).get(day, {}).get('attempts', [])
+        matches = [attempt for attempt in attempts
+                   if attempt.get('owner') == previous_owner and attempt.get('status') == 'failed']
+        if len(matches) != 1 or active_claim(ledger):
             raise ValueError('Recovery requires exact failed current-day owner and no active claim.')
-        prior = dict(entry)
-        entry.clear()
-        entry.update(owner=owner, status='active', started_at=dt.datetime.now(dt.timezone.utc).isoformat(),
-                     recovery_run=run, recovery_state_sha256=state_sha256, prior_claim=prior)
+        prior = dict(matches[0])
+        entry = dict(owner=owner, status='active', source=prior.get('source'),
+                     started_at=dt.datetime.now(dt.timezone.utc).isoformat(), recovery_run=run,
+                     recovery_state_sha256=state_sha256, prior_claim=prior)
+        attempts.append(entry)
         save(path, ledger)
-        return {'day': day, **entry}
+        return {'day': day, 'attempt': len(attempts), **entry}
 
 
 def prerequisites(fd):
     repos = {}
-    for name, repo in [('flightdeck', fd), ('wmapp', ROOT)]:
+    for name, repo in [('flightdeck', fd), ('nbrowser', ROOT)]:
         repos[name] = {'branch': git(repo, 'branch', '--show-current'),
                        'commit': git(repo, 'rev-parse', 'HEAD'),
                        'status': git(repo, 'status', '--porcelain'),
@@ -136,7 +193,7 @@ def main():
     parser.add_argument('--flightdeck', type=Path, default=ROOT.parent / 'flightdeck')
     parser.add_argument('--owner', default=os.environ.get('SESSION_ID'))
     parser.add_argument('--day', help='Claimed Perth date, YYYY-MM-DD; finish must use claim output.')
-    parser.add_argument('--result', choices=('blocked_auth', 'failed', 'processing', 'testing'))
+    parser.add_argument('--result', choices=('blocked_auth', 'failed', 'processing', 'action_required', 'testing'))
     args = parser.parse_args()
     safe_private()
     if args.action == 'dry-run':
@@ -151,7 +208,8 @@ def main():
             raise ValueError('Finish requires the exact claimed --day.')
         if args.action == 'claim' and day != dt.datetime.now(ZoneInfo('Australia/Perth')).date().isoformat():
             raise ValueError('Claim must use the current Perth day.')
-        output = transition(PRIVATE, args.action, args.owner, day, args.result)
+        source = source_identity(args.flightdeck) if args.action == 'claim' else None
+        output = transition(PRIVATE, args.action, args.owner, day, args.result, source)
     print(json.dumps(output, indent=2))
 
 

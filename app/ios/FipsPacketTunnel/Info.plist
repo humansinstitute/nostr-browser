@@ -16,6 +16,10 @@
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
 	<string>XPC!</string>
+	<key>NBrowserSourceCommit</key>
+	<string>$(NBROWSER_SOURCE_COMMIT)</string>
+	<key>NBrowserSourceRepository</key>
+	<string>$(NBROWSER_SOURCE_REPOSITORY)</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(FLUTTER_BUILD_NAME)</string>
 	<key>CFBundleVersion</key>
