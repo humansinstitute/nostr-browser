@@ -515,21 +515,9 @@ class NStackWorkspaceDiscoveryService {
       identityNpub: identityNpub,
       secret: secret,
     );
-    final identities =
-        discovered.map((w) => w.serviceNpub).whereType<String>().toSet();
-    if (identities.length == 1) {
-      final matches =
-          registry.stacks.where((s) => s.publicIdentity == identities.single);
-      if (matches.isNotEmpty) {
-        return registryStore.applyWorkspaceDiscovery(
-          identityNpub,
-          candidate: matches.first.copyWith(url: canonical),
-          expectedPreviousUrl: matches.first.url,
-          discovered: discovered,
-          refreshedAt: _clock().toUtc(),
-        );
-      }
-    }
+    // Add identifies a saved connection by its canonical address, not by a
+    // service key that may be shared by multiple endpoints. Moving an existing
+    // connection belongs to changeAddress and its explicit identity checks.
     final candidate = NStackEntry(
       id: newNStackOpaqueId(),
       name: 'NStack',

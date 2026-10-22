@@ -25,3 +25,20 @@ Automated checks: run Flutter analysis, then Flutter tests sequentially. The
 identity edit tests reload a new preferences-backed store to simulate restart;
 widget tests cover hidden default values, explicit reveal and rename. These do
 not establish real remote discovery, device restart or TestFlight availability.
+
+## Multiple saved connections
+
+Use a disposable test profile, never an existing personal registry. Add two
+addresses, including endpoints that advertise the same Tower service identity.
+Both cards must remain in insertion order. Re-add a canonical spelling of the
+second address (case/trailing slash); it refreshes the same card. Add a third
+address and confirm all three remain. Select, rename, refresh and explicitly
+edit one connection; the others must retain their names, workspace aliases,
+links, background, preferences, host and backup selections. Close and reopen the
+app and verify the complete list and selections again. An address edit to an
+already saved address must fail without changing either connection.
+
+`flutter test test/nstack_multi_stack_test.dart` exercises these persistence and
+concurrent-write cases with synthetic discovery and in-memory preferences; a
+new store instance reads the saved data to simulate reopen. It does not establish
+physical-device installation or a real OS-process restart.

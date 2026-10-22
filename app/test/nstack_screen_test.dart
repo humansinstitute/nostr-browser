@@ -21,6 +21,57 @@ void main() {
         InMemorySharedPreferencesAsync.empty();
   });
 
+  testWidgets('second add keeps both cards after screen restoration',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 3000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final identity = NostrCrypto.importIdentity(_identitySecret);
+    Widget screen(NStackRegistryStore store) {
+      final grants = NStackGrantStore();
+      return MaterialApp(
+          home: Scaffold(
+              body: NStackScreen(
+        config: AppConfig.defaults().copyWith(
+            deviceNpub: identity.npub,
+            devicePublicKeyHex: identity.publicKeyHex,
+            deviceSecret: _identitySecret),
+        registryStore: store,
+        grantStore: grants,
+        accessService:
+            NStackAccessService(registryStore: store, grantStore: grants),
+        discoveryService: NStackWorkspaceDiscoveryService(
+            registryStore: store, discovery: _SharedIdentityDiscovery()),
+        recoveryService: NStackRecoveryService(
+            registryStore: store, storage: _NoStorage(), relay: _NoRelay()),
+        onRegistryChanged: () {},
+      )));
+    }
+
+    final store = NStackRegistryStore();
+    await tester.pumpWidget(screen(store));
+    await tester.pumpAndSettle();
+    for (final address in [
+      'https://first.example',
+      'https://second.example',
+      'https://SECOND.example/'
+    ]) {
+      await tester.tap(find.byKey(const ValueKey('add-nstack')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), address);
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+    }
+    expect(find.byTooltip('Reveal connection details'), findsNWidgets(2));
+    expect((await store.load(identity.npub)).stacks.map((s) => s.url),
+        ['https://first.example', 'https://second.example']);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpWidget(screen(NStackRegistryStore()));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Reveal connection details'), findsNWidgets(2));
+    expect(find.text('NStack'), findsNWidgets(2));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('management surface hides endpoints and revokes origin discovery',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1200, 3000));
@@ -614,3 +665,21 @@ const _backupStackWithTwoWorkspaces = NStackEntry(
     ),
   ],
 );
+
+class _SharedIdentityDiscovery implements NStackWorkspaceDiscovery {
+  @override
+  Future<List<NStackWorkspace>> discover(
+          {required String address,
+          required String identityNpub,
+          required String secret}) async =>
+      [
+        NStackWorkspace(
+            id: '',
+            name: 'Workspace',
+            remoteId: 'shared-workspace',
+            workspaceOwnerNpub: identityNpub,
+            workspaceServiceNpub: identityNpub,
+            serviceNpub: identityNpub,
+            directHttpsUrl: address),
+      ];
+}

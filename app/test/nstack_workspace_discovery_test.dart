@@ -655,7 +655,7 @@ void main() {
   });
 
   test(
-      'adding another endpoint with the same Tower identity keeps one saved stack',
+      'adding another endpoint with the same Tower identity appends a saved stack',
       () async {
     final store = NStackRegistryStore();
     final original = _discovered('workspace-a', 'Alpha', identity.npub);
@@ -684,11 +684,13 @@ void main() {
         secret: secret,
         address: 'https://second.example');
     final restarted = await NStackRegistryStore().load(identity.npub);
-    expect(restarted.stacks, hasLength(1));
-    expect(moved.id, first.id);
-    expect(moved.name, 'Home NStack');
+    expect(restarted.stacks, hasLength(2));
+    expect(restarted.stacks.first.name, 'Home NStack');
+    expect(restarted.stacks.first.url, 'https://first.example');
+    expect(moved.id, isNot(first.id));
+    expect(moved.name, 'NStack');
     expect(moved.url, 'https://second.example');
-    expect(moved.workspaces.single.id, first.workspaces.single.id);
+    expect(moved.workspaces.single.id, isNot(first.workspaces.single.id));
   });
 
   test('linked legacy to PG transition retains the private workspace alias',
