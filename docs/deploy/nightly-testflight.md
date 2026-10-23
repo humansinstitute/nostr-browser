@@ -64,8 +64,9 @@ file list, elapsed time, or a newer build alone establishes neither.
    complete current thread, latest comments, all repository agent guides and
    the current release-tool implementation before acting.
 2. Inspect both working trees, staged changes, branch and upstream. Default
-   to `main`; stop on another branch, conflicts, incompatible work or moving
-   inputs. Preserve unrelated and concurrent files. Never stash, reset,
+   to `main`; reconcile compatible divergence with a normal merge while preserving
+   local commits and edits. Use an isolated checkout for packaging when needed;
+   stop only for unresolved incompatible changes or moving selected inputs. Preserve unrelated and concurrent files. Never stash, reset,
    rebase, force-push or bypass hooks.
 3. Flight Deck comes first. Review all compatible nonignored software and
    reusable documentation, run focused tests and required public-source,
@@ -75,8 +76,10 @@ file list, elapsed time, or a newer build alone establishes neither.
    source. Verify the exact tested staged tree remains unchanged, then commit
    a Conventional Commit checkpoint. A clean tree retains its existing commit.
    Push the configured authoritative upstream only as a normal fast-forward
-   when safely permitted; divergence/auth failures are blockers, never a reason
-   to substitute stale remote source for the newer local commit.
+   when safely permitted; resolve compatible divergence before building. Retain local history and instructions;
+   portable documentation edits and noisy performance thresholds alone must not
+   suppress a correctly validated signed release. Report benchmark observations
+   separately; actual functional regressions remain release blockers.
 4. Validate NBrowser analysis/tests sequentially and release tooling tests. Review
    and commit all compatible tested nonignored source/docs on `main`, checking
    for concurrent edits before committing. Ignore operational evidence and
@@ -127,7 +130,9 @@ file list, elapsed time, or a newer build alone establishes neither.
     cannot assign groups. Resolve actual standard encryption beyond
     OS crypto accurately using the documented inventory and authorized territories.
     The API never patches encryption flags or reuses an older declaration. If
-    Apple requires compliance action, stop and report it; do not invent exemptions
+    Apple requires compliance action after upload, report the exact uploaded build
+    and questionnaire as a human continuation; previous-build compliance alone
+    must not suppress a fresh upload. Never invent answers; do not invent exemptions
     or change territories. Assign only the exact processed build to the existing
     group and independently read it back. Report `Testing`, `Processing`, action
     required or failure; never call a receipt or IPA a published release.
