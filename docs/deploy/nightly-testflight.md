@@ -229,3 +229,22 @@ An interrupted recovery must be inspected before any further mutation.
 Apple documents [altool as a supported upload route](https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds).
 The installed tool's `--help` specifies package identity and private-key-path
 options. Processing and exact private audience readback remain mandatory.
+
+## Continue readback after a completed questionnaire
+
+If the same current-day worker has already finished its claim as
+`action_required` or `processing`, and Apple subsequently accepts compliance,
+resume only the already uploaded run:
+
+```sh
+"$RELEASE_VENV/bin/python" tools/ios/nightly_testflight.py resume-readback --run "$RUN"
+"$RELEASE_VENV/bin/python" tools/ios/testflight_release.py api-readback --run "$RUN" --poll-seconds 600
+```
+
+This appends a claim while preserving the previous result. It requires the same
+owner, exact delivered source pair, completed upload command, current Perth day,
+and no active release. Its authority permits only this run's readback and private
+group assignment; reservation, build, upload and other runs remain forbidden.
+Finish the continued claim with the observed outcome. A different worker/day
+requires explicit supported handoff; never alter ledger history to impersonate
+an owner or retry an upload. Read-only readback remains available without a claim.

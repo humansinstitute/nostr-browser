@@ -1,4 +1,7 @@
 import importlib.util
+import json
+import os
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -12,6 +15,55 @@ SPEC.loader.exec_module(n)
 class NightlyTests(unittest.TestCase):
     old = {'nbrowser': 'a' * 40, 'flightdeck': 'b' * 40}
     new = {'nbrowser': 'c' * 40, 'flightdeck': 'd' * 40}
+
+    def test_delivered_readback_continuation_preserves_finished_claim(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp)
+            n.transition(path, 'claim', 'worker', '2026-10-24', source=self.old)
+            n.transition(path, 'finish', 'worker', '2026-10-24', 'action_required')
+            before = json.loads((path / 'ledger.json').read_text())['days']['2026-10-24']['attempts'][0]
+            state = dict(api=True, stage='api_action_required', source=self.old,
+                         upload_command_completed_at='2026-10-24T00:00:00Z')
+            got = n.resume_readback(path, 'worker', '2026-10-24', 'delivered-run', state)
+            self.assertEqual(got['readback_run'], 'delivered-run')
+            attempts = json.loads((path / 'ledger.json').read_text())['days']['2026-10-24']['attempts']
+            self.assertEqual(attempts[0], before)
+            self.assertEqual(len(attempts), 2)
+            with self.assertRaises(ValueError):
+                n.resume_readback(path, 'worker', '2026-10-24', 'delivered-run', state)
+
+    def test_readback_continuation_rejects_other_owner_source_and_unuploaded_run(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp)
+            n.transition(path, 'claim', 'worker', '2026-10-24', source=self.old)
+            n.transition(path, 'finish', 'worker', '2026-10-24', 'action_required')
+            state = dict(api=True, stage='api_action_required', source=self.old,
+                         upload_command_completed_at='2026-10-24T00:00:00Z')
+            for owner, run, changed in [('other', 'run', state), ('worker', '../run', state),
+                    ('worker', 'run', dict(state, source=self.new)),
+                    ('worker', 'run', dict(state, stage='exported')),
+                    ('worker', 'run', dict(state, upload_command_completed_at=None))]:
+                with self.assertRaises(ValueError):
+                    n.resume_readback(path, owner, '2026-10-24', run, changed)
+
+    def test_continued_claim_cannot_reserve_build_or_upload_or_read_another_run(self):
+        sys.path.insert(0, str(Path(__file__).parents[1] / 'ios'))
+        import testflight_api_release as api
+        day = n.dt.datetime.now(n.ZoneInfo('Australia/Perth')).date().isoformat()
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp)
+            n.transition(path, 'claim', 'worker', day, source=self.old)
+            n.transition(path, 'finish', 'worker', day, 'action_required')
+            n.resume_readback(path, 'worker', day, 'exact-run', dict(api=True,
+                stage='api_action_required', source=self.old, upload_command_completed_at='now'))
+            with patch.dict(sys.modules, nightly_testflight=n), patch.object(n, 'PRIVATE', path), \
+                    patch.object(n, 'safe_private'), patch.dict(os.environ, SESSION_ID='worker'):
+                api.require_daily_claim(Path('exact-run'), 'api-readback')
+                for action in ['api-reserve', 'api-build', 'api-upload']:
+                    with self.assertRaisesRegex(ValueError, 'never upload'):
+                        api.require_daily_claim(Path('exact-run'), action)
+                with self.assertRaises(ValueError):
+                    api.require_daily_claim(Path('another-run'), 'api-readback')
 
     def test_duplicate_and_overlap_fail_closed_even_same_owner(self):
         with tempfile.TemporaryDirectory() as temp:

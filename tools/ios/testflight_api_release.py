@@ -41,6 +41,8 @@ def require_daily_claim(run=None, action=None):
     entry = active_claim(ledger, day)
     if not owner or not entry or entry.get('owner') != owner:
         raise ValueError('Nightly API mutation requires this session’s active Perth daily claim.')
+    if entry.get('readback_run') and (run is None or entry['readback_run'] != run.name or action != 'api-readback'):
+        raise ValueError('Continued claim authorizes only exact delivered-run readback, never upload.')
     if entry.get('recovery_run') and (run is None or entry['recovery_run'] != run.name or action not in ('api-upload', 'api-readback')):
         raise ValueError('Recovered claim authorizes only exact retained-run upload/readback.')
     return entry

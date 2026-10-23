@@ -149,6 +149,33 @@ def recover_claim(directory, owner, previous_owner, run, state_sha256):
         return {'day': day, 'attempt': len(attempts), **entry}
 
 
+def resume_readback(directory, owner, day, run, state):
+    """Append same-owner authority for one delivered run; never authorize upload."""
+    if (not owner or not run or Path(run).name != run or
+            state.get('stage') not in ('api_action_required', 'api_assigned_ready', 'api_processing') or
+            not state.get('api') or not state.get('upload_command_completed_at') or
+            not _valid_source(state.get('source'))):
+        raise ValueError('Readback continuation requires an exact delivered API run.')
+    if directory.is_symlink() or any((directory / n).is_symlink() for n in ('.lock', 'ledger.json', 'ledger.new')):
+        raise ValueError('Claim storage cannot use symlinks.')
+    with (directory / '.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        path = directory / 'ledger.json'
+        ledger = _ledger(json.loads(path.read_text()))
+        attempts = ledger.get('days', {}).get(day, {}).get('attempts', [])
+        if active_claim(ledger) or not attempts:
+            raise ValueError('Readback continuation requires a finished claim and no active release.')
+        prior = attempts[-1]
+        if (prior.get('owner') != owner or prior.get('source') != state['source'] or
+                prior.get('status') not in ('action_required', 'processing')):
+            raise ValueError('Only the exact finished claim owner/source may resume readback.')
+        entry = dict(owner=owner, status='active', source=state['source'], readback_run=run,
+                     prior_claim=dict(prior), started_at=dt.datetime.now(dt.timezone.utc).isoformat())
+        attempts.append(entry)
+        save(path, ledger)
+        return {'day': day, 'attempt': len(attempts), **entry}
+
+
 def prerequisites(fd):
     repos = {}
     for name, repo in [('flightdeck', fd), ('nbrowser', ROOT)]:
@@ -189,7 +216,8 @@ def prerequisites(fd):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('dry-run', 'claim', 'finish'))
+    parser.add_argument('action', choices=('dry-run', 'claim', 'finish', 'resume-readback'))
+    parser.add_argument('--run', help='Exact delivered run for readback continuation only.')
     parser.add_argument('--flightdeck', type=Path, default=ROOT.parent / 'flightdeck')
     parser.add_argument('--owner', default=os.environ.get('SESSION_ID'))
     parser.add_argument('--day', help='Claimed Perth date, YYYY-MM-DD; finish must use claim output.')
@@ -208,8 +236,19 @@ def main():
             raise ValueError('Finish requires the exact claimed --day.')
         if args.action == 'claim' and day != dt.datetime.now(ZoneInfo('Australia/Perth')).date().isoformat():
             raise ValueError('Claim must use the current Perth day.')
-        source = source_identity(args.flightdeck) if args.action == 'claim' else None
-        output = transition(PRIVATE, args.action, args.owner, day, args.result, source)
+        if args.action == 'resume-readback':
+            if day != dt.datetime.now(ZoneInfo('Australia/Perth')).date().isoformat() or not args.run or Path(args.run).name != args.run:
+                raise ValueError('Readback continuation requires current day and exact run name.')
+            from appstore_connect import APP, owner_file
+            state_path = ROOT / 'tmp/docs/handoffs/testflight' / args.run / 'state.json'
+            safe_private(state_path)
+            state = json.loads(owner_file(state_path).read_text())
+            if state.get('app_id') != APP:
+                raise ValueError('Readback continuation app mismatch.')
+            output = resume_readback(PRIVATE, args.owner, day, args.run, state)
+        else:
+            source = source_identity(args.flightdeck) if args.action == 'claim' else None
+            output = transition(PRIVATE, args.action, args.owner, day, args.result, source)
     print(json.dumps(output, indent=2))
 
 
