@@ -66,6 +66,20 @@ class AppleTests(unittest.TestCase):
             link = Path(d).resolve() / 'link'; link.symlink_to(p)
             with self.assertRaises(ValueError): owner_file(link)
 
+    def test_native_logs_are_private_at_creation_and_preserve_existing_bytes(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d).resolve() / 'export.log'
+            previous = os.umask(0o022)
+            try:
+                with release.private_log(path) as stream:
+                    self.assertEqual(owner_file(path), path)
+                    stream.write(b'original native evidence')
+                with self.assertRaises(FileExistsError):
+                    release.private_log(path)
+                self.assertEqual(path.read_bytes(), b'original native evidence')
+            finally:
+                os.umask(previous)
+
     def test_tls_verification_and_xcode_auth(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d).resolve() / 'key'; p.write_text('fixture'); p.chmod(0o600)
@@ -294,6 +308,7 @@ class RunnerTests(unittest.TestCase):
                     (target/'release-notes.json').write_text('{"releases":[]}')
                 return 'a'*40
             def run_command(args,**kw):
+                owner_file(Path(kw['stdout'].name).resolve())
                 actions.append(' '.join(map(str,args)))
                 if args==['bun','run','build']:
                     dist=kw['cwd']/'dist';dist.mkdir()

@@ -232,11 +232,16 @@ def preserve_outputs(run):
             write(run / ('previous-' + name + '-hashes.json'), hashes)
 
 
+def private_log(path):
+    # Recovery consumes these logs through owner_file; restrict at creation.
+    return open(path, 'xb', opener=lambda name, flags: os.open(name, flags, 0o600))
+
+
 def logged(args, run, label):
     # Preserve each retry separately; never publish private build/signing logs.
     log = run / (label + '-' + str(time.time_ns()) + '.log')
     print('Running', args[0], '; private log:', log, flush=True)
-    with log.open('wb') as stream:
+    with private_log(log) as stream:
         result = subprocess.run([str(a) for a in args], stdout=stream, stderr=subprocess.STDOUT)
     if result.returncode:
         if 'No Accounts' in log.read_text(errors='replace'):

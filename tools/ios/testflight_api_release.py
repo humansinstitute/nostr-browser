@@ -137,7 +137,7 @@ def execute(r, a, run):
         env.update(FLIGHTDECK_BUILD_NUMBER=str(number), FLIGHTDECK_BUILD_ID='wmapp-' + s['flightdeck_commit'][:12] + '-' + str(number),
                    SOURCE_DATE_EPOCH=r.command(['git', '-C', a.flightdeck, 'log', '-1', '--format=%ct', s['source']['flightdeck']]).decode().strip(), FLIGHT_DECK_DIR=str(fd))
         def logged(args, cwd, label):
-            with (run / (label + '.log')).open('xb') as stream:
+            with r.private_log(run / (label + '.log')) as stream:
                 p = subprocess.run([str(x) for x in args], cwd=cwd, env=env, stdout=stream, stderr=subprocess.STDOUT)
             r.require(p.returncode == 0, label + ' failed; inspect private log. No automatic retry.')
         logged(['bun', 'install', '--frozen-lockfile'], fd, 'fd-install')
