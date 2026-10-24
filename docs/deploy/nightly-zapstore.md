@@ -1,6 +1,9 @@
-# Wingman Nightly on Zapstore
+# Nostr Browser nightly on Zapstore
 
-Wingman Nightly uses `com.wingmanbefree.wingman_app.nightly`, installs alongside
+Read [shared nightly policy](nightly-release-policy.md) before either lane.
+The canonical release source is Nostr Browser; the old WMAPP checkout is not required.
+
+Nostr Browser nightly uses `com.wingmanbefree.wingman_app.nightly`, installs alongside
 stable WMAPP and has its own private persistent Android signing keystore.
 Stable package, publisher and `zapstore.yaml` remain unchanged. Nightly's public
 catalog and repository ownership proof live at
@@ -17,22 +20,19 @@ These are Android credentials, separate from the Nostr identity. Never derive,
 export or provide a Nostr private key. Back up Android credentials privately;
 future APK updates require the same certificate.
 
-1. One existing 22:00 `Australia/Perth` scheduler session prepares validated,
-   compatible source checkpoints on main: Flight Deck first, WMAPP second.
-   Preserve incompatible/concurrent edits and report them. TestFlight executes
-   its existing private release contract, records its result and finishes its
-   claim before Android. An Apple failure does not silently skip Android.
-2. Set the verified `FLIGHT_DECK_PG_APP_NPUB` from scoped Flight Deck context.
-   Run `python3 tools/nightly_zapstore.py build`. It checks no TestFlight claim
-   is active, queries relay history, reserves above all local/remote numbers,
-   derives the marketing version from the exact committed pubspec, and builds
-   Flight Deck then Android from isolated committed archives. It validates
-   Flight Deck public source/tests/dist, Flutter analysis/tests and ARM64 APK.
-   Generated files never modify shared source. Local reservations never expire.
-   For independently authorized first-publication setup only,
-   `--committed-source` may preserve incompatible active edits and records their
-   exclusion while validating the exact committed snapshots. Scheduled runs
-   require clean, validated source and must not use this exception.
+1. Two independent existing scheduler sessions start at 22:00 `Australia/Perth`.
+   This lane performs Android only; Apple claims, failure or compliance never
+   gate it. Use the short process-owned lock only for source preparation and
+   immutable snapshots, then release it before packaging/delivery.
+2. Set the verified Flight Deck app and broker publisher public identities from
+   scoped context. Run `python3 tools/nightly_zapstore.py dry-run` before `build`.
+   It queries complete signed relay history and verifies the original private
+   Android certificate. Build reserves above all local/remote numbers and takes
+   exact committed FD/NBrowser snapshots. It runs mandatory functional tests
+   with `test:release`, analysis, build and asset checks. Source preparation
+   repairs routine divergence and portable docs while preserving local work.
+   Scheduled runs must not use `--committed-source` to hide compatible changes.
+   Known build failures retain their number/logs without preventing later nights.
 3. Build also compiles the pinned native Drive filesystem helper required by
    Flutter integration tests. On a known pre-delivery build prerequisite failure,
    `resume-build` validates the retained source archive journals and resumes the
@@ -69,7 +69,7 @@ future APK updates require the same certificate.
    For a narrowly authorized CDN grant, scope `blossom.authorize` to upload only,
    `https://cdn.zapstore.dev`, the configured publisher's identity, this Nightly package/purpose and
    exact APK/icon hashes/sizes; never widen unrelated session capabilities.
-   Only all gates passing produce `published`. A receipt alone is insufficient.
+   Only all gates passing produce `published`. Relay success first records `uploaded`; anonymous APK/hash/certificate/assets and public listing checks must then pass. A receipt alone is insufficient.
    Independently verify the public listing and linked release/asset records.
    Release download metadata uses the exact APK hash with
    `https://cdn.zapstore.dev/<hash>?redirect=true`; verify a GET redirects to the

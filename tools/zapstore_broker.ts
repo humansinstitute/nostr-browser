@@ -18,7 +18,7 @@ export function validate(e:Event, cert:string) {
     if(!Number.isSafeInteger(e.created_at)||e.created_at<1||!/^[1-9]\d*$/.test(tag(e,"expiry")??"")||!Number.isSafeInteger(Number(tag(e,"expiry")))||Number(tag(e,"expiry"))<=e.created_at||tag(e,"d")!==cert || e.content!=="" || e.tags.some(t=>!["d","signature","expiry"].includes(t[0]))) throw Error("Wrong certificate proof");
   } else {
     if(tag(e,e.kind===32267?"d":"i")!==PACKAGE) throw Error("Stable or foreign package rejected");
-    if(e.kind===32267 && (tag(e,"name")!=="Wingman Nightly" || tag(e,"repository")!=="https://github.com/OtherStuffAI/wingman-nightly")) throw Error("Wrong app metadata");
+    if(e.kind===32267 && (tag(e,"name")!=="Nostr Browser" || tag(e,"repository")!=="https://github.com/OtherStuffAI/wingman-nightly")) throw Error("Wrong app metadata");
     if(e.kind===30063 && (tag(e,"c")!=="nightly" || tag(e,"d")!==`${PACKAGE}@${tag(e,"version")}`)) throw Error("Wrong release channel");
     if(e.kind===3063 && (tag(e,"apk_certificate_hash")!==cert || !/^[1-9]\d*$/.test(tag(e,"version_code")??"") || !/^[a-f0-9]{64}$/.test(tag(e,"x")??""))) throw Error("Invalid asset identity");
   }
@@ -78,9 +78,10 @@ async function main() {
   const autopilot=resolve(process.env.AUTOPILOT_REPO??"../autopilot");
   const {callCapabilityBroker,readCapabilityIdentity}=await import(autopilot+"/src/mcp/capability-client.ts");
   const {verifyEvent}=await import(autopilot+"/node_modules/nostr-tools/lib/esm/index.js");
-  if(action==="history") {
+  if(action==="history" || action==="preflight") {
+    if(action==="preflight" && (await readCapabilityIdentity()).botPubkeyHex!==PUBLISHER)throw Error("Publisher broker identity required");
     const events=await completeHistory(filter=>exchange([["REQ","history",filter]],null));
-    console.log(JSON.stringify({maxVersionCode:historyMax(events,verifyEvent),historyCount:events.length,historyComplete:true}));return;
+    console.log(JSON.stringify({maxVersionCode:historyMax(events,verifyEvent),historyCount:events.length,historyComplete:true,versionCodes:events.map(e=>Number(tag(e,"version_code"))),releases:events.map(e=>({versionCode:Number(tag(e,"version_code")),version:tag(e,"version"),eventId:e.id,createdAt:e.created_at,apkSha256:tag(e,"x"),certificateSha256:tag(e,"apk_certificate_hash")})),publisher:PUBLISHER,package:PACKAGE}));return;
   }
   if((await readCapabilityIdentity()).botPubkeyHex!==PUBLISHER)throw Error("Publisher broker identity required");
   if(action==="sign") {

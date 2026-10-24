@@ -105,7 +105,7 @@ def transition(directory, action, owner, day, result=None, source=None):
             attempts = record['attempts']
             if any(attempt.get('source') is None for attempt in attempts):
                 raise ValueError('This Perth day has a legacy claim without pinned source; reconcile it explicitly.')
-            if any(attempt.get('source') == source for attempt in attempts):
+            if any(attempt.get('source') == source and not attempt.get('readback_run') for attempt in attempts):
                 raise ValueError('This exact committed source is already claimed for the Perth day; do not duplicate it.')
             attempts.append({'owner': owner, 'status': 'active', 'source': dict(source),
                              'started_at': dt.datetime.now(dt.timezone.utc).isoformat()})
@@ -149,8 +149,8 @@ def recover_claim(directory, owner, previous_owner, run, state_sha256):
         return {'day': day, 'attempt': len(attempts), **entry}
 
 
-def resume_readback(directory, owner, day, run, state):
-    """Append same-owner authority for one delivered run; never authorize upload."""
+def resume_readback(directory, owner, day, run, state, previous_owner=None):
+    """Append readback-only authority, including an explicit later-worker handoff."""
     if (not owner or not run or Path(run).name != run or
             state.get('stage') not in ('api_action_required', 'api_assigned_ready', 'api_processing') or
             not state.get('api') or not state.get('upload_command_completed_at') or
@@ -158,19 +158,71 @@ def resume_readback(directory, owner, day, run, state):
         raise ValueError('Readback continuation requires an exact delivered API run.')
     if directory.is_symlink() or any((directory / n).is_symlink() for n in ('.lock', 'ledger.json', 'ledger.new')):
         raise ValueError('Claim storage cannot use symlinks.')
+    if directory.is_symlink() or any((directory/n).is_symlink() for n in ('.lock', 'ledger.json', 'ledger.new')):
+        raise ValueError('Claim storage cannot use symlinks.')
     with (directory / '.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         path = directory / 'ledger.json'
         ledger = _ledger(json.loads(path.read_text()))
-        attempts = ledger.get('days', {}).get(day, {}).get('attempts', [])
-        if active_claim(ledger) or not attempts:
+        candidates = [attempt for record_day, record in sorted(ledger['days'].items())
+                      if record_day <= day for attempt in record['attempts']
+                      if attempt.get('owner') == (previous_owner or owner) and
+                      attempt.get('source') == state['source'] and
+                      attempt.get('status') in ('action_required', 'processing')]
+        if active_claim(ledger) or not candidates:
             raise ValueError('Readback continuation requires a finished claim and no active release.')
-        prior = attempts[-1]
-        if (prior.get('owner') != owner or prior.get('source') != state['source'] or
-                prior.get('status') not in ('action_required', 'processing')):
-            raise ValueError('Only the exact finished claim owner/source may resume readback.')
+        prior = candidates[-1]
+        attempts = ledger['days'].setdefault(day, {'attempts': []})['attempts']
         entry = dict(owner=owner, status='active', source=state['source'], readback_run=run,
                      prior_claim=dict(prior), started_at=dt.datetime.now(dt.timezone.utc).isoformat())
+        attempts.append(entry)
+        save(path, ledger)
+        return {'day': day, 'attempt': len(attempts), **entry}
+
+
+def retry_source(directory, owner, previous_owner, day, run, states, history):
+    """Append exact-source authority only after proved pre-delivery failure.
+
+    The CLI verifies a different previous owner is archived. Elapsed time is
+    never proof; native exports use their separate retained-artifact recovery.
+    """
+    if not owner or not previous_owner or run not in states:
+        raise ValueError('Exact prior owner/run required.')
+    state = states[run]
+    source = state.get('source')
+    if not _valid_source(source) or not history.get('history_complete') or history.get('pending_upload_ids') or history.get('pending_build_ids'):
+        raise ValueError('Complete source and clear live delivery history required.')
+    for retained in states.values():
+        if retained.get('source') == source:
+            if (retained.get('stage') not in ('initialized', 'building', 'archived') or
+                    any(k.startswith('upload_') for k in retained) or
+                    any(int(b['attributes']['version']) == retained['build'] for b in history['builds']) or
+                    any(int(u['attributes']['cfBundleVersion']) == retained['build'] for u in history['uploads'])):
+                raise ValueError('Delivery/export reservation exists; recover exact run or readback, never rebuild.')
+    if directory.is_symlink() or any((directory/n).is_symlink() for n in ('.lock', 'ledger.json', 'ledger.new')):
+        raise ValueError('Claim storage cannot use symlinks.')
+    with (directory / '.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        path = directory / 'ledger.json'
+        ledger = _ledger(json.loads(path.read_text()))
+        candidates = [a for record in ledger['days'].values() for a in record['attempts']
+                      if a.get('owner') == previous_owner and a.get('source') == source]
+        if not candidates or candidates[-1].get('status') not in ('failed', 'blocked_auth', 'active'):
+            raise ValueError('Exact failed/pre-delivery claim required.')
+        prior = candidates[-1]
+        active = active_claim(ledger)
+        if active is not None and active is not prior:
+            raise ValueError('Another release is active.')
+        preserved = dict(prior)
+        if prior['status'] == 'active':
+            prior.update(status='failed', finished_at=dt.datetime.now(dt.timezone.utc).isoformat(),
+                         reconciliation='archived owner; exact retained pre-delivery evidence and clear Apple history')
+        entry = dict(owner=owner, status='active', source=source, retry_run=run,
+                     prior_claim=preserved,
+                     retained_state_hashes={name:s.get('retained_state_sha256') for name,s in states.items()
+                                            if s.get('source') == source},
+                     started_at=dt.datetime.now(dt.timezone.utc).isoformat())
+        attempts = ledger['days'].setdefault(day, {'attempts': []})['attempts']
         attempts.append(entry)
         save(path, ledger)
         return {'day': day, 'attempt': len(attempts), **entry}
@@ -188,16 +240,21 @@ def prerequisites(fd):
     reference = PRIVATE / 'auth-reference.json'
     if reference.is_file():
         try:
-            from appstore_connect import Client
+            from appstore_connect import Client, APP, BUNDLE
             from testflight_api_release import numbers, delivery_barrier
             import testflight_release as release
             client = Client(reference)
+            app = client.request(f'/v1/apps/{APP}')['data']
+            if app['id'] != APP or app['attributes']['bundleId'] != BUNDLE:
+                raise ValueError('Wrong authenticated app/bundle.')
+            auth.pop('reason', None)
+            auth.update(ready=True, status='api_authenticated')
             h = client.preflight()
             auth.pop('reason', None)
             auth.update(ready=True, status='api_authenticated', history_complete=True,
                         builds=numbers(h), audience=h['audience'],
                         pending_upload_ids=h['pending_upload_ids'], pending_build_ids=h['pending_build_ids'],
-                        upload_path='xcodebuild API archive/export/upload; live upload not yet proven',
+                        upload_path='native API archive/export; recovered exact export uses altool upload',
                         release_ready=not h['pending_upload_ids'] and not h['pending_build_ids'],
                         inactive_upload_ids=h['inactive_upload_ids'])
             try:
@@ -207,7 +264,10 @@ def prerequisites(fd):
             if h['pending_upload_ids'] or h['pending_build_ids']:
                 auth['release_blocker'] = 'Apple pending delivery requires reconciliation.'
         except (ValueError, OSError, KeyError, ImportError) as error:
-            auth.update(ready=False, release_ready=False, status='blocked_auth', reason=str(error))
+            if auth['ready']:
+                auth.update(release_ready=False, status='blocked_release', release_blocker=str(error))
+            else:
+                auth.update(ready=False, release_ready=False, status='blocked_auth', reason=str(error))
     return {'repos': repos, 'main_ready': all(v['branch'] == 'main' for v in repos.values()),
             'tools': {tool: bool(shutil.which(tool)) for tool in ('flutter', 'xcodebuild', 'codesign', 'bun', 'node', 'rsync')},
             'auth': auth, 'upload_performed': False}
@@ -216,9 +276,10 @@ def prerequisites(fd):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('dry-run', 'claim', 'finish', 'resume-readback'))
+    parser.add_argument('action', choices=('dry-run', 'claim', 'finish', 'resume-readback', 'retry-source'))
     parser.add_argument('--run', help='Exact delivered run for readback continuation only.')
-    parser.add_argument('--flightdeck', type=Path, default=ROOT.parent / 'flightdeck')
+    parser.add_argument('--previous-owner', help='Explicit finished-claim owner for later-worker readback only.')
+    parser.add_argument('--flightdeck', type=Path, default=ROOT.parent / 'wm/flightdeck')
     parser.add_argument('--owner', default=os.environ.get('SESSION_ID'))
     parser.add_argument('--day', help='Claimed Perth date, YYYY-MM-DD; finish must use claim output.')
     parser.add_argument('--result', choices=('blocked_auth', 'failed', 'processing', 'action_required', 'testing'))
@@ -234,9 +295,31 @@ def main():
             raise ValueError('Invalid Perth day.')
         if args.action == 'finish' and not args.day:
             raise ValueError('Finish requires the exact claimed --day.')
-        if args.action == 'claim' and day != dt.datetime.now(ZoneInfo('Australia/Perth')).date().isoformat():
+        if args.action in ('claim', 'retry-source') and day != dt.datetime.now(ZoneInfo('Australia/Perth')).date().isoformat():
             raise ValueError('Claim must use the current Perth day.')
-        if args.action == 'resume-readback':
+        if args.action == 'retry-source':
+            from appstore_connect import Client, APP
+            import testflight_release as release
+            from testflight_api_release import local_states
+            from testflight_export_recovery import stopped_session
+            if not args.previous_owner or not args.run or Path(args.run).name != args.run:
+                raise ValueError('Retry requires exact --previous-owner and --run.')
+            if args.previous_owner != args.owner:
+                stopped_session(args.previous_owner)
+            states = {}
+            for path, state in local_states(release):
+                if state.get('source'):
+                    if state.get('api') is not True or state.get('app_id') != APP:
+                        raise ValueError('Retry source includes a different app/protocol.')
+                    state = dict(state, retained_state_sha256=release.digest(path))
+                    if (any((path.parent / n).exists() for n in ('upload.log', 'UploadOptions.plist', 'upload-output', 'export.log')) or
+                            list(path.parent.glob('upload-*.log'))):
+                        state = dict(state, upload_evidence=True)
+                    states[path.parent.name] = state
+            safe_private(PRIVATE / 'ledger.json')
+            client = Client(PRIVATE / 'auth-reference.json')
+            output = retry_source(PRIVATE, args.owner, args.previous_owner, day, args.run, states, client.preflight())
+        elif args.action == 'resume-readback':
             if day != dt.datetime.now(ZoneInfo('Australia/Perth')).date().isoformat() or not args.run or Path(args.run).name != args.run:
                 raise ValueError('Readback continuation requires current day and exact run name.')
             from appstore_connect import APP, owner_file
@@ -245,7 +328,7 @@ def main():
             state = json.loads(owner_file(state_path).read_text())
             if state.get('app_id') != APP:
                 raise ValueError('Readback continuation app mismatch.')
-            output = resume_readback(PRIVATE, args.owner, day, args.run, state)
+            output = resume_readback(PRIVATE, args.owner, day, args.run, state, args.previous_owner)
         else:
             source = source_identity(args.flightdeck) if args.action == 'claim' else None
             output = transition(PRIVATE, args.action, args.owner, day, args.result, source)

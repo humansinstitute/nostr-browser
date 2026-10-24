@@ -1,5 +1,8 @@
 # Daily private TestFlight release
 
+Read [shared nightly policy](nightly-release-policy.md) for independent lanes,
+short process locks, immutable snapshots and supported recovery.
+
 Autopilot's supported scheduler starts one bounded agent session daily at
 22:00 `Australia/Perth` (`0 22 * * *`, 14:00 UTC). The enabled trigger stores
 the full execution contract, repository paths, identity and reporting route.
@@ -90,7 +93,7 @@ file list, elapsed time, or a newer build alone establishes neither.
    Perth day and source pair. An active claim fails closed globally. A finished
    same-day attempt blocks the same source pair, but a later attempt may claim
    genuinely newer committed source. Legacy same-day claims without pinned
-   source require explicit reconciliation. A crash never expires a claim;
+   source use the supported evidence-backed retry route. A crash never expires a claim;
    uncertain delivery retains it.
 6. Check authentication and release gates before expensive packaging. Run
    `nightly_testflight.py dry-run` with the private virtual environment. On
@@ -241,10 +244,10 @@ resume only the already uploaded run:
 "$RELEASE_VENV/bin/python" tools/ios/testflight_release.py api-readback --run "$RUN" --poll-seconds 600
 ```
 
-This appends a claim while preserving the previous result. It requires the same
-owner, exact delivered source pair, completed upload command, current Perth day,
-and no active release. Its authority permits only this run's readback and private
+This appends a claim while preserving the previous result. It requires the exact
+delivered source pair, completed upload command, a finished prior claim and no
+active release. A later worker/day supplies `--previous-owner <finished-owner>`. Its authority permits only this run's readback and private
 group assignment; reservation, build, upload and other runs remain forbidden.
 Finish the continued claim with the observed outcome. A different worker/day
-requires explicit supported handoff; never alter ledger history to impersonate
+uses that explicit readback-only handoff; never alter ledger history to impersonate
 an owner or retry an upload. Read-only readback remains available without a claim.

@@ -134,6 +134,11 @@ class Client:
             if state in ('COMPLETE', 'FAILED'):
                 continue
             rule = rules.get(u['id'])
+            if state == 'AWAITING_UPLOAD' and not rule:
+                from testflight_export_recovery import completed_reservation
+                if completed_reservation(self, u, result):
+                    inactive.append(u['id'])
+                    continue
             # Never infer abandonment from age, a newer build, or AWAITING_UPLOAD alone.
             # Only exact reviewed legacy reservations with retained evidence qualify.
             if state == 'AWAITING_UPLOAD' and rule:
@@ -166,6 +171,18 @@ class Client:
         return evidence
 
     def local_reconciled(self, path):
+        state = json.loads(owner_file(path).read_bytes())
+        if (state.get('api') is True and state.get('app_id') == APP and
+                state.get('stage') in ('api_action_required', 'api_assigned_ready', 'api_testing') and
+                state.get('upload_command_completed_at')):
+            # A known delivered build needing legal input must not suppress a
+            # newer upload. Reconfirm exact processing and private audience live;
+            # never turn a receipt, failed processing or uncertainty into success.
+            live = self.readback(state['version'], state['build'], assign=False)
+            require(live.get('processing') == 'VALID' and live.get('build_id') and
+                    live.get('stage') in ('uploaded_action_required', 'processed_awaiting_tester', 'api_testing'),
+                    'Prior delivery is not independently verified as processed.')
+            return True
         rule = self.config.get('reconciled_local_runs', {}).get(path.parent.name)
         if not rule:
             return False
@@ -234,18 +251,18 @@ class Client:
         require(attrs['version'] == str(number), 'Build identity changed.')
         if attrs['processingState'] != 'VALID':
             return {'stage': 'uploaded_processing' if attrs['processingState'] == 'PROCESSING' else
-                    'uploaded_action_required', 'build_id': ident, 'processing': attrs['processingState']}
+                    'failed_processing', 'build_id': ident, 'processing': attrs['processingState']}
         require(attrs.get('buildAudienceType') == 'INTERNAL_ONLY', 'Build is not Internal Only.')
         detail = self.request(f'/v1/builds/{ident}/buildBetaDetail')['data']['attributes']
         beta = detail['internalBuildState']
-        if beta not in ('READY_FOR_BETA_TESTING', 'IN_BETA_TESTING'):
-            # Never infer an exemption from a previous build, patch false, or reuse a declaration.
-            return {'stage': 'uploaded_action_required', 'build_id': ident, 'internal_status': beta,
-                    'compliance': 'action_required', 'uses_non_exempt_encryption': attrs.get('usesNonExemptEncryption')}
         groups = self.all(f'/v1/betaGroups?filter[builds]={ident}&limit=200')
         require(all(g['id'] == audience['group_id'] for g in groups), 'Exact build has unexpected groups.')
         individuals = self.all(f'/v1/builds/{ident}/individualTesters?limit=200')
         require(not individuals, 'Exact build has individual tester distribution.')
+        if beta not in ('READY_FOR_BETA_TESTING', 'IN_BETA_TESTING'):
+            # Never infer an exemption from a previous build, patch false, or reuse a declaration.
+            return {'stage': 'uploaded_action_required', 'build_id': ident, 'internal_status': beta, 'processing': 'VALID',
+                    'compliance': 'action_required', 'uses_non_exempt_encryption': attrs.get('usesNonExemptEncryption')}
         assigned = any(g['id'] == audience['group_id'] for g in groups)
         if assign and not assigned:
             self.audience()

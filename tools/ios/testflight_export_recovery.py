@@ -7,17 +7,54 @@ import re
 import subprocess
 import zipfile
 import plistlib
+import shutil
+import hashlib
+
+
+def retain_export_logs(r, run):
+    """Preserve native evidence immediately, before temporary Xcode logs disappear."""
+    from nightly_testflight import safe_private
+    export = (run / 'export.log').read_text()
+    paths = re.findall(r'Created bundle at path "([^"\n]+\.xcdistributionlogs)"', export)
+    require('** EXPORT SUCCEEDED **' in export and len(paths) == 1,
+            'Unique successful native export log required.')
+    # Xcode commonly reports /var on macOS, whose OS-owned alias is /private/var.
+    # Canonicalize that read source, then reject symlinks within the native bundle.
+    source = Path(paths[0]).resolve(strict=True)
+    target = run / 'native-export' / source.name
+    safe_private(target)
+    require(source.is_dir() and not any(p.is_symlink() for p in [source, *source.parents]) and
+            not any(p.is_symlink() for p in source.rglob('*')), 'Unsafe native export evidence.')
+    if target.exists():
+        require(r.tree_hash(source) == r.tree_hash(target), 'Retained native export logs differ.')
+    else:
+        target.parent.mkdir(mode=0o700, exist_ok=True)
+        shutil.copytree(source, target, copy_function=shutil.copy2)
+        require(r.tree_hash(source) == r.tree_hash(target), 'Native log copy changed bytes.')
+        for path in target.rglob('*'):
+            if path.is_file(): path.chmod(0o600)
+    return target
+
+
+def automatic_recovery(r, client, run, s, h):
+    """Reconcile only this export's exact empty reservation using retained proof."""
+    from types import SimpleNamespace
+    if not h['pending_upload_ids'] or (run / 'export-recovery.json').exists():
+        return
+    logs = list((run / 'native-export').glob('*.xcdistributionlogs'))
+    require(len(logs) == 1, 'Retained native export evidence required for automatic recovery.')
+    recover(r, client, run, s, SimpleNamespace(export_logs=logs[0], previous_owner=None))
 
 from appstore_connect import APP, BUNDLE, owner_file, require
 
 
-def export_proof(r, run, s, logs):
+def export_proof(r, run, s, logs, completed=False):
     from nightly_testflight import safe_private
     require(s.get('stage') == 'exported' and s.get('api') is True and s.get('app_id') == APP,
             'Recovery requires an exported private API run, never attempted delivery.')
-    require(not any((run / name).exists() or (run / name).is_symlink() for name in ('upload.log', 'UploadOptions.plist', 'upload-output')) and
+    require(completed or (not any((run / name).exists() or (run / name).is_symlink() for name in ('upload.log', 'UploadOptions.plist', 'upload-output')) and
             not list(run.glob('upload-*.log')) and
-            not any(k.startswith('upload_') for k in s), 'Delivery intent/evidence exists; readback only.')
+            not any(k.startswith('upload_') for k in s)), 'Delivery intent/evidence exists; readback only.')
     safe_private(logs)
     export = owner_file(run / 'export.log').read_text()
     require('** EXPORT SUCCEEDED **' in export, 'Successful export evidence required.')
@@ -71,6 +108,57 @@ def export_proof(r, run, s, logs):
             'preflight_sha256': r.digest(run / 'api-preflight.json'), 'ipa_sha256': s['artifact']['sha256']}
 
 
+def completed_reservation(client, upload, builds):
+    """Recognize a proved native export reservation left behind by altool delivery.
+
+    Keep the Apple record and numbering. Revalidate native bytes, original state,
+    retained signed artifact, empty files and independently processed exact build.
+    No legal answer, cancellation rule or mutation is manufactured.
+    """
+    import testflight_release as r
+    from nightly_testflight import safe_private
+    matches = []
+    for path in r.PRIVATE.glob('*/export-recovery.json'):
+        safe_private(path)
+        proof = json.loads(owner_file(path).read_bytes())
+        if proof.get('upload_id') == upload['id']:
+            matches.append((path.parent, proof))
+    if not matches: return False
+    require(len(matches) == 1, 'Ambiguous native export recovery evidence.')
+    run, proof = matches[0]
+    state = json.loads(owner_file(run/'state.json').read_bytes())
+    if state.get('stage') not in ('api_testing', 'api_action_required', 'api_assigned_ready'):
+        return False
+    require(state.get('api') is True and state.get('app_id') == APP and
+            state.get('stage') in ('api_testing', 'api_action_required', 'api_assigned_ready') and
+            state.get('upload_command_completed_at'), 'Export reservation delivery not completed; recover/readback exact run.')
+    original = dict(state, stage='exported')
+    original.pop('api_readback', None); original.pop('upload_command_completed_at', None)
+    require(hashlib.sha256((json.dumps(original, indent=2)+'\n').encode()).hexdigest() == proof['state_sha256'],
+            'Original exported state cannot be verified.')
+    require(proof.get('schema') == 1 and proof.get('app_id') == APP and
+            proof.get('basis') == 'same_run_native_export_reservation' and proof.get('run') == run.name,
+            'Invalid completed native reservation proof.')
+    fresh = export_proof(r, run, original, Path(proof['logs']), completed=True)
+    require(all(proof.get(k) == v for k,v in fresh.items()), 'Native completed reservation proof changed.')
+    a = upload['attributes']
+    require(proof['reservation'] == dict(id=upload['id'], version=a['cfBundleShortVersionString'],
+            build=int(a['cfBundleVersion']), created_at=a['createdDate']) and
+            a['state']['state'] == 'AWAITING_UPLOAD' and a['uploadedDate'] is None and
+            not any(a['state'].get(k) for k in ('errors','warnings','infos')) and
+            not client.all(f'/v1/buildUploads/{upload["id"]}/buildUploadFiles?limit=200'),
+            'Completed native reservation has new delivery evidence or pin drift.')
+    exact = [b for b in builds if b['build'] == state['build'] and b['version'] == state['version']]
+    require(len(exact) == 1 and exact[0]['processing'] == 'VALID' and
+            exact[0]['id'] == state.get('api_readback', {}).get('build_id'),
+            'Independent exact processed delivery absent.')
+    audience = client.audience()
+    require(all(g['id'] == audience['group_id'] for g in client.all(
+        f'/v1/betaGroups?filter[builds]={exact[0]["id"]}&limit=200')) and not client.all(
+        f'/v1/builds/{exact[0]["id"]}/individualTesters?limit=200'), 'Completed export private audience drift.')
+    return True
+
+
 def recovery_history(r, client, h, s, proof):
     ident = proof['upload_id']
     matches = [u for u in h['uploads'] if u['id'] == ident]
@@ -99,7 +187,7 @@ def recovery_history(r, client, h, s, proof):
 
 def stopped_session(owner):
     # Supported read-only runtime route; do not infer stopped from an old comment.
-    repo = Path(__file__).resolve().parents[3] / 'autopilot'
+    repo = Path(os.environ.get('AUTOPILOT_REPO', Path.home() / 'code/wm/autopilot'))
     result = subprocess.run(['bun', 'clis/sessions.ts', 'archive-info', owner, '--json'],
                             cwd=repo, capture_output=True, text=True, check=True)
     session = json.loads(result.stdout)['session']

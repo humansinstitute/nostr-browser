@@ -11,6 +11,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'ios'))
 from appstore_connect import Client, APP, BUNDLE, GROUP, owner_file
 import testflight_api_release as api
@@ -133,7 +134,10 @@ class AppleTests(unittest.TestCase):
         attrs={'version':'10','processingState':'PROCESSING','buildAudienceType':'INTERNAL_ONLY'}
         c.request=Mock(return_value={'data':{'attributes':attrs}})
         self.assertEqual(c.readback('0.1.7',10)['stage'],'uploaded_processing')
+        attrs['processingState']='INVALID'
+        self.assertEqual(c.readback('0.1.7',10)['stage'],'failed_processing')
         attrs['processingState']='VALID'
+        c.all=Mock(side_effect=[[],[]])
         c.request=Mock(side_effect=[{'data':{'attributes':attrs}}, {'data':{'attributes':{'internalBuildState':'MISSING_EXPORT_COMPLIANCE'}}}])
         self.assertEqual(c.readback('0.1.7',10,assign=True)['stage'],'uploaded_action_required')
         self.assertEqual(c.request.call_count,2)
@@ -143,6 +147,20 @@ class AppleTests(unittest.TestCase):
         result=c.readback('0.1.7',10,assign=True)
         self.assertEqual(result['stage'],'api_testing');self.assertFalse(result['pete_device_visibility_verified'])
         self.assertEqual(c.request.call_args_list[2].args[1],'POST')
+
+    def test_prior_compliance_action_is_rechecked_live_without_blocking_fresh_upload(self):
+        c=client()
+        with tempfile.TemporaryDirectory() as temp:
+            state=Path(temp).resolve()/'state.json'
+            value=dict(api=True,app_id=APP,version='0.1.7',build=10,stage='api_action_required',upload_command_completed_at='now')
+            state.write_text(json.dumps(value));state.chmod(0o600)
+            c.readback=Mock(return_value=dict(processing='VALID',build_id='exact',stage='uploaded_action_required'))
+            self.assertTrue(c.local_reconciled(state))
+            c.readback.assert_called_once_with('0.1.7',10,assign=False)
+            self.assertEqual(json.loads(state.read_text()),value)
+            for result in [dict(stage='upload_pending'),dict(processing='INVALID',build_id='exact',stage='uploaded_action_required')]:
+                c.readback.return_value=result
+                with self.assertRaises(ValueError):c.local_reconciled(state)
 
 
 class RunnerTests(unittest.TestCase):
@@ -269,7 +287,7 @@ class RunnerTests(unittest.TestCase):
                 'build':11,'version':'0.1.7','stage':'initialized','source':source})
             a=SimpleNamespace(action='api-build',auth_reference='unused',flightdeck=Path('/fd'))
             actions=[]
-            def snapshot(r,repo,target):
+            def snapshot(r,repo,target,commit=None):
                 actions.append('snapshot-'+target.name);target.mkdir()
                 if target.name=='flightdeck':
                     (target/'.build-meta.json').write_text('{"absoluteVersion":2246}')
@@ -289,9 +307,10 @@ class RunnerTests(unittest.TestCase):
                 if 'remote' in args:
                     return release.SOURCE_REPOSITORY.encode()
                 return b'100'
-            with patch.object(api,'Client',return_value=c), patch.object(api,'require_daily_claim'), patch.object(api,'delivery_barrier'), patch.object(release,'project_settings'), patch.dict(os.environ,{'FLIGHT_DECK_PG_APP_NPUB':'verified-fixture'}), patch.object(nightly,'source_identity',return_value=source), patch.object(api,'snapshot',side_effect=snapshot), patch.object(release,'command',side_effect=command), patch.object(api.subprocess,'run',side_effect=run_command), patch.object(release,'signed_app',side_effect=signatures), patch.object(release,'validate_artifacts',return_value={'sha256':'fixture'}):
+            with patch.object(api,'Client',return_value=c), patch.object(api,'require_daily_claim',return_value={'source':source}), patch.object(api,'delivery_barrier'), patch.object(release,'project_settings'), patch.dict(os.environ,{'FLIGHT_DECK_PG_APP_NPUB':'verified-fixture'}), patch.object(nightly,'source_identity',return_value=source), patch.object(api,'snapshot',side_effect=snapshot), patch.object(release,'command',side_effect=command), patch.object(api.subprocess,'run',side_effect=run_command), patch.object(release,'signed_app',side_effect=signatures), patch.object(release,'validate_artifacts',return_value={'sha256':'fixture'}), patch('release_sources.source_lock',return_value=__import__('contextlib').nullcontext()), patch('testflight_export_recovery.retain_export_logs'):
                 api.execute(release,a,run)
-            self.assertLess(actions.index('bun run verify:dist'),actions.index('snapshot-wmapp'))
+            self.assertLess(actions.index('snapshot-wmapp'),actions.index('bun run build'))
+            self.assertLess(actions.index('bun run test:release'),actions.index('bun run build'))
             self.assertLess(actions.index('signed-both-targets'),next(i for i,x in enumerate(actions) if '-exportArchive' in x))
             self.assertEqual(release.read(run/'state.json')['stage'],'exported')
             self.assertEqual(release.read(run/'state.json')['source_repository'],

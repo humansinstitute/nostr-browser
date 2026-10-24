@@ -501,7 +501,7 @@ def main():
     p.add_argument('--auth-reference', type=Path, default=ROOT / 'tmp/docs/handoffs/nightly-testflight/auth-reference.json')
     p.add_argument('--export-logs', type=Path, help='Recovery only: preserved native export distribution logs.')
     p.add_argument('--previous-owner', help='Recovery only: archived owner of the failed current-day claim.')
-    p.add_argument('--flightdeck', type=Path, default=ROOT.parent / 'flightdeck')
+    p.add_argument('--flightdeck', type=Path, default=ROOT.parent / 'wm/flightdeck')
     p.add_argument('--read-only', action='store_true', help='API readback only: never assign a group; allows recovery without a daily claim.')
     p.add_argument('--poll-seconds', type=int, default=600)
     a = p.parse_args()

@@ -163,3 +163,54 @@ class RecoveryTests(unittest.TestCase):
         before = r.read(self.run / 'api-preflight.json'); before['uploads'] = self.h['uploads']
         r.write(self.run / 'api-preflight.json', before)
         with self.assertRaises(ValueError): self.proof()
+
+    def test_native_logs_are_preserved_byte_for_byte_with_timestamps(self):
+        source=self.run/'native'/'export.xcdistributionlogs';source.parent.mkdir()
+        import shutil
+        shutil.copytree(self.logs,source,copy_function=shutil.copy2)
+        (self.run/'export.log').write_text('Created bundle at path "'+str(source)+'"\n** EXPORT SUCCEEDED **')
+        before={p.name:(p.read_bytes(),p.stat().st_mtime_ns) for p in source.iterdir()}
+        with patch.object(nightly,'safe_private'):
+            retained=recovery.retain_export_logs(r,self.run)
+            self.assertEqual({p.name:(p.read_bytes(),p.stat().st_mtime_ns) for p in retained.iterdir()},before)
+            self.assertEqual(recovery.retain_export_logs(r,self.run),retained)
+            (retained/'ContentDelivery.log').write_text('changed')
+            with self.assertRaises(ValueError):recovery.retain_export_logs(r,self.run)
+
+    def test_automatic_recovery_requires_exact_native_proof_not_merely_empty_files(self):
+        from types import SimpleNamespace
+        retained=self.run/'native-export'/self.logs.name;retained.parent.mkdir()
+        import shutil
+        shutil.copytree(self.logs,retained,copy_function=shutil.copy2)
+        r.write(self.run/'state.json',self.s)
+        self.client.preflight=Mock(return_value=self.h)
+        with patch.object(nightly,'safe_private'),patch.object(api,'require_daily_claim'),patch.object(api,'delivery_barrier'),patch.object(r,'no_other_delivery'),patch.object(r,'validate_artifacts',return_value=self.s['artifact']):
+            recovery.automatic_recovery(r,self.client,self.run,self.s,self.h)
+            self.assertEqual(r.read(self.run/'export-recovery.json')['upload_id'],ID)
+            self.assertEqual(r.read(self.run/'state.json')['stage'],'exported')
+            self.client.request.assert_not_called()
+        (self.run/'export-recovery.json').unlink()
+        (retained/'ContentDelivery.log').write_text('empty reservation with no ownership proof')
+        with patch.object(nightly,'safe_private'),patch.object(api,'require_daily_claim'),patch.object(r,'validate_artifacts',return_value=self.s['artifact']):
+            with self.assertRaises(ValueError):recovery.automatic_recovery(r,self.client,self.run,self.s,self.h)
+        self.assertFalse((self.run/'export-recovery.json').exists())
+
+    def test_completed_altool_delivery_reconciles_only_exact_proved_native_reservation(self):
+        import hashlib, copy
+        original=copy.deepcopy(self.s)
+        proof=self.proof()
+        proof.update(schema=1,app_id=APP,basis='same_run_native_export_reservation',run=self.run.name,
+                     reservation=dict(id=ID,version='0.1.7',build=11,created_at='2024-01-01T00:00:00Z'),
+                     state_sha256=hashlib.sha256((json.dumps(original,indent=2)+'\n').encode()).hexdigest())
+        r.write(self.run/'export-recovery.json',proof)
+        state=dict(original,stage='api_testing',upload_command_completed_at='now',api_readback={'build_id':'delivered-id'})
+        r.write(self.run/'state.json',state)
+        self.client.audience=Mock(return_value={'group_id':'private'})
+        self.client.all=Mock(return_value=[])
+        builds=[dict(build=11,version='0.1.7',processing='VALID',id='delivered-id')]
+        with patch.object(r,'PRIVATE',self.run.parent),patch.object(nightly,'safe_private'),patch.object(r,'validate_artifacts',return_value=self.s['artifact']):
+            self.assertTrue(recovery.completed_reservation(self.client,self.h['uploads'][0],builds))
+            with self.assertRaises(ValueError):recovery.completed_reservation(self.client,self.h['uploads'][0],[])
+            self.client.all.return_value=[{'id':'unexplained-upload-file'}]
+            with self.assertRaises(ValueError):recovery.completed_reservation(self.client,self.h['uploads'][0],builds)
+        self.assertEqual(r.read(self.run/'state.json'),state)

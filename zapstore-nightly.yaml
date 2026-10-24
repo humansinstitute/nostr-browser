@@ -1,9 +1,9 @@
 repository: https://github.com/OtherStuffAI/wingman-nightly
 release_source: ./app/build/app/outputs/flutter-apk/app-release.apk
-name: Wingman Nightly
-summary: Daily preview of the native Wingman client.
+name: Nostr Browser
+summary: Daily preview of Nostr Browser.
 description: >-
-  Wingman Nightly is the daily Android preview of Wingman Be Free, including
+  Nostr Browser is the daily Android preview of Nostr Browser, including
   the latest validated and committed Flight Deck. It installs alongside WMAPP.
 tags: [nostr, productivity, tools]
 supported_nips: ["07", "98"]

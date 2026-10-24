@@ -81,18 +81,12 @@ def reserve(r, run, client):
     return s
 
 
-def snapshot(r, repo, target):
-    r.require(r.command(['git', '-C', repo, 'branch', '--show-current']).decode().strip() == 'main', 'Snapshot requires main.')
-    r.require(not r.command(['git', '-C', repo, 'status', '--porcelain']), 'Commit compatible source before snapshot.')
-    commit = r.command(['git', '-C', repo, 'rev-parse', 'HEAD']).decode().strip()
-    target.mkdir(mode=0o700)
-    tar = target.parent / (target.name + '.tar')
-    with tar.open('xb') as stream:
-        subprocess.run(['git', '-C', str(repo), 'archive', commit], stdout=stream, check=True)
-    subprocess.run(['tar', '-xf', str(tar), '-C', str(target)], check=True)
-    r.require(r.command(['git', '-C', repo, 'rev-parse', 'HEAD']).decode().strip() == commit and
-              not r.command(['git', '-C', repo, 'status', '--porcelain']), 'Source changed during snapshot; preserve and stop.')
-    return commit
+def snapshot(r, repo, target, commit=None):
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from release_sources import snapshot as committed_snapshot
+    return committed_snapshot(Path(repo), target, commit or r.command(
+        ['git', '-C', repo, 'rev-parse', 'HEAD']).decode().strip())
 
 
 def execute(r, a, run):
@@ -121,33 +115,39 @@ def execute(r, a, run):
     if a.action == 'api-build':
         r.require(s['stage'] == 'initialized', 'Build already attempted; preserve evidence.')
         r.require(os.environ.get('FLIGHT_DECK_PG_APP_NPUB'), 'Verified FLIGHT_DECK_PG_APP_NPUB required.')
-        from nightly_testflight import source_identity
-        r.require(s.get('source') == source_identity(a.flightdeck),
-                  'Committed source changed after the daily claim; preserve evidence and claim the new pair explicitly.')
+        from nightly_testflight import _valid_source
+        r.require(_valid_source(s.get('source')) and s['source'] == require_daily_claim(run, a.action)['source'],
+                  'Build must use the exact source pair authorized by its daily claim.')
         h = client.preflight()
         reservation_gate(r, h, s)
         delivery_barrier(r, run, client)
         s['stage'] = 'building'; r.write(state, s)
         # Flight Deck is built first from the exact committed snapshot.
         fd = run / 'flightdeck'; wm = run / 'wmapp'
-        s['flightdeck_commit'] = snapshot(r, a.flightdeck, fd)
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from release_sources import source_lock
+        with source_lock(r.ROOT):
+            s['flightdeck_commit'] = snapshot(r, a.flightdeck, fd, s['source']['flightdeck'])
+            s['source_commit'] = snapshot(r, r.ROOT, wm, s['source']['nbrowser'])
         meta = json.loads((fd / '.build-meta.json').read_text())
         notes = json.loads((fd / 'release-notes.json').read_text())
         number = max([meta['absoluteVersion']] + [x['buildNumber'] for x in notes['releases']])
         env = os.environ.copy()
         env.update(FLIGHTDECK_BUILD_NUMBER=str(number), FLIGHTDECK_BUILD_ID='wmapp-' + s['flightdeck_commit'][:12] + '-' + str(number),
-                   SOURCE_DATE_EPOCH=r.command(['git', '-C', a.flightdeck, 'log', '-1', '--format=%ct']).decode().strip(), FLIGHT_DECK_DIR=str(fd))
+                   SOURCE_DATE_EPOCH=r.command(['git', '-C', a.flightdeck, 'log', '-1', '--format=%ct', s['source']['flightdeck']]).decode().strip(), FLIGHT_DECK_DIR=str(fd))
         def logged(args, cwd, label):
             with (run / (label + '.log')).open('xb') as stream:
                 p = subprocess.run([str(x) for x in args], cwd=cwd, env=env, stdout=stream, stderr=subprocess.STDOUT)
             r.require(p.returncode == 0, label + ' failed; inspect private log. No automatic retry.')
         logged(['bun', 'install', '--frozen-lockfile'], fd, 'fd-install')
+        logged(['bun', 'run', 'check:public-source'], fd, 'fd-public-source')
+        logged(['bun', 'run', 'test:release'], fd, 'fd-tests')
         logged(['bun', 'run', 'build'], fd, 'fd-build')
         logged(['bun', 'run', 'verify:dist'], fd, 'fd-verify')
         s['flightdeck_version'] = json.loads((fd / 'dist/version.json').read_text())
         r.require(s['flightdeck_version']['buildId'] == env['FLIGHTDECK_BUILD_ID'], 'Flight Deck build ID mismatch.')
         s['flightdeck_assets'] = r.tree_hash(fd / 'dist')
-        s['source_commit'] = snapshot(r, r.ROOT, wm)
         s['source_repository'] = r.command(
             ['git', '-C', r.ROOT, 'remote', 'get-url', 'origin']).decode().strip()
         r.require(s['source_repository'] == r.SOURCE_REPOSITORY,
@@ -171,9 +171,13 @@ def execute(r, a, run):
         logged(['xcodebuild', '-exportArchive', '-archivePath', run / 'Runner.xcarchive', '-exportPath', run / 'export',
                 '-exportOptionsPlist', r.options(), *client.xcode_args()], wm, 'export')
         s['artifact'] = r.validate_artifacts(run, s); s['stage'] = 'exported'; r.write(state, s)
+        from testflight_export_recovery import retain_export_logs
+        retain_export_logs(r, run)
     elif a.action == 'api-upload':
         r.require(s['stage'] == 'exported', 'Upload attempted already; readback only, never retry.')
         h = client.preflight()
+        from testflight_export_recovery import automatic_recovery
+        automatic_recovery(r, client, run, s, h)
         recovered = (run / 'export-recovery.json').exists()
         if recovered:
             from testflight_export_recovery import upload_gate
@@ -199,7 +203,7 @@ def execute(r, a, run):
             result = client.readback(s['version'], s['build'], assign=not getattr(a, 'read_only', False))
             stages = {'upload_pending': 'api_upload_uncertain', 'uploaded_processing': 'api_processing',
                       'uploaded_action_required': 'api_action_required', 'api_testing': 'api_testing',
-                      'processed_awaiting_tester': 'api_assigned_ready'}
+                      'processed_awaiting_tester': 'api_assigned_ready', 'failed_processing': 'api_failed_processing'}
             s['stage'] = stages[result['stage']]; s['api_readback'] = result; r.write(state, s)
             if result['stage'] not in ('uploaded_processing', 'upload_pending', 'processed_awaiting_tester') or time.monotonic() >= deadline:
                 break

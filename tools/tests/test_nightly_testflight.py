@@ -126,3 +126,39 @@ class NightlyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 n.transition(path, 'claim', 'a', '2026-10-06', source=self.old)
             self.assertEqual(evidence.read_text(), 'preserve')
+
+    def test_later_worker_can_resume_exact_delivered_run_without_upload_authority(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp)
+            n.transition(path, 'claim', 'old-worker', '2026-10-23', source=self.old)
+            n.transition(path, 'finish', 'old-worker', '2026-10-23', 'action_required')
+            state = dict(api=True, stage='api_action_required', source=self.old,
+                         upload_command_completed_at='2026-10-23T14:30:00Z')
+            got = n.resume_readback(path, 'new-worker', '2026-10-24', 'delivered', state,
+                                    previous_owner='old-worker')
+            self.assertEqual(got['owner'], 'new-worker')
+            self.assertEqual(got['readback_run'], 'delivered')
+            self.assertEqual(got['prior_claim']['owner'], 'old-worker')
+            self.assertEqual(json.loads((path/'ledger.json').read_text())['days']['2026-10-23']['attempts'][0]['status'], 'action_required')
+
+    def test_retry_same_source_requires_proven_pre_delivery_failure(self):
+        import copy
+        for unsafe in (None, 'exported', 'upload_pending', 'api_action_required'):
+            with tempfile.TemporaryDirectory() as temp:
+                path = Path(temp)
+                n.transition(path, 'claim', 'old-worker', '2026-10-23', source=self.old)
+                states = {'prior': dict(source=self.old, stage=unsafe or 'building', build=11)}
+                history = dict(history_complete=True, pending_upload_ids=[], pending_build_ids=[], builds=[], uploads=[])
+                if unsafe:
+                    with self.assertRaises(ValueError):
+                        n.retry_source(path, 'new-worker', 'old-worker', '2026-10-24', 'prior', states, history)
+                else:
+                    original = copy.deepcopy(states)
+                    for changed in [dict(history, pending_upload_ids=['unmatched']), dict(history, history_complete=False),
+                                    dict(history, uploads=[{'attributes':{'cfBundleVersion':'11'}}])]:
+                        with self.assertRaises(ValueError):
+                            n.retry_source(path, 'new-worker', 'old-worker', '2026-10-24', 'prior', states, changed)
+                    got = n.retry_source(path, 'new-worker', 'old-worker', '2026-10-24', 'prior', states, history)
+                    self.assertEqual(got['source'], self.old)
+                    self.assertEqual(got['prior_claim']['status'], 'active')
+                    self.assertEqual(states, original)
