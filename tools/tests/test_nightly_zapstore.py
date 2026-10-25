@@ -120,3 +120,27 @@ class NightlyTests(unittest.TestCase):
                 record.write_text('changed proof')
                 with self.assertRaises(ValueError):n.restore_history(evidence,history)
 if __name__=='__main__':unittest.main()
+
+class AssetFailureRecoveryTests(unittest.TestCase):
+    def test_failed_apk_is_retained_without_clearing_uncertain_delivery(self):
+        import tempfile, zipfile
+        with tempfile.TemporaryDirectory() as temp:
+            run=Path(temp)
+            (run/'flightdeck/dist/fonts').mkdir(parents=True)
+            (run/'flightdeck/dist/fonts/example.woff2').write_bytes(b'font')
+            (run/'flightdeck/dist/version.json').write_text('{"buildId":"test"}')
+            with zipfile.ZipFile(run/'app-release.apk','w') as archive:
+                archive.writestr('assets/flutter_assets/assets/flightdeck/index.html','page')
+            before=(run/'app-release.apk').read_bytes()
+            state=dict(owner='same',stage='building',version_code=42)
+            history=dict(historyComplete=True,versionCodes=[])
+            result=n.fail_build(state,run,'same',history)
+            self.assertEqual(result['stage'],'failed_before_delivery')
+            self.assertEqual(before,(run/'app-release.apk').read_bytes())
+            self.assertEqual(state['stage'],'building')
+            for owner,h in [('other',history),('same',dict(historyComplete=False,versionCodes=[])),('same',dict(historyComplete=True,versionCodes=[42]))]:
+                with self.assertRaises(ValueError): n.fail_build(state,run,owner,h)
+            for name in ('signed.json','proof-unsigned.json','github-assets.log','relay-publish-public.log'):
+                (run/name).write_text('retained')
+                with self.assertRaises(ValueError): n.fail_build(state,run,'same',history)
+                (run/name).unlink()

@@ -45,4 +45,18 @@ flutter:
   assets:
     - assets/app-selector/
     - assets/flightdeck/
+    - assets/flightdeck/ambulando/
+    - assets/flightdeck/ambulando/icons/
     - assets/flightdeck/assets/
+    - assets/flightdeck/excalidraw-assets/fonts/Assistant/
+    - assets/flightdeck/excalidraw-assets/fonts/Cascadia/
+    - assets/flightdeck/excalidraw-assets/fonts/ComicShanns/
+    - assets/flightdeck/excalidraw-assets/fonts/Excalifont/
+    - assets/flightdeck/excalidraw-assets/fonts/Liberation/
+    - assets/flightdeck/excalidraw-assets/fonts/Lilita/
+    - assets/flightdeck/excalidraw-assets/fonts/Nunito/
+    - assets/flightdeck/excalidraw-assets/fonts/Virgil/
+    - assets/flightdeck/excalidraw-assets/fonts/Xiaolai/
+    - assets/flightdeck/legal/
+    - assets/flightdeck/napplets/message-activity/
+    - assets/flightdeck/napplets/org-data/v1/

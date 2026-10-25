@@ -105,3 +105,12 @@ and the configured publisher's Nostr publisher are distinct cryptographic identi
 Configure `WMAPP_ZAPSTORE_PUBLISHER_NPUB` and the matching publisher in a private manifest before publication. The public manifest intentionally has no publisher identity.
 
 Set `WMAPP_ZAPSTORE_PUBLISHER_HEX` to the public hex encoding of the same verified publisher used in `WMAPP_ZAPSTORE_PUBLISHER_NPUB`. The broker refuses to run without it; event and broker identity checks retain exact publisher pinning.
+
+Flight Deck asset directories are registered recursively by the bundle updater
+because Flutter directory declarations include only their immediate files. Keep
+every built asset hash in the APK check, including nested fonts and legal pages.
+If an interrupted helper leaves `building` after APK asset validation fails,
+`fail-build --day <original-day>` reproduces that exact retained APK failure and
+requires same ownership, complete live history and no publisher signing or delivery
+evidence before recording `failed_before_delivery`. It never authorizes a same-day
+rebuild, upload, publication, number reuse or removal of the retained APK.

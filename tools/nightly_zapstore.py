@@ -224,9 +224,33 @@ def reconcile_build(state, run, history, archived):
                     history_max=history['maxVersionCode']))
 
 
+def fail_build(state, run, owner, history):
+    """Retain a verified asset-validation failure; never clear delivery uncertainty."""
+    if (not owner or state.get('owner') != owner or state.get('stage') != 'building' or
+            not history.get('historyComplete') or state['version_code'] in history['versionCodes'] or
+            state.get('public_release_url') or any((run/name).exists() for name in
+            ('signed.json','proof-unsigned.json','proof-signed.json','signed-public-assets.json',
+             'broker-sign.log','broker-upload.log','relay-publish.log','relay-publish-public.log',
+             'github-assets.log','build-proof.json'))):
+        raise ValueError('Only owned pre-publication asset-check failures can be recorded.')
+    expected = assets(run/'flightdeck/dist')
+    if not expected or not (run/'app-release.apk').is_file():
+        raise ValueError('Retained built APK and exact Flight Deck assets required.')
+    try:
+        verify_bundled_apk(run/'app-release.apk', expected)
+    except (KeyError, ValueError) as error:
+        return dict(state, stage='failed_before_delivery', failure=str(error),
+                    apk_sha256=digest(run/'app-release.apk'),
+                    flightdeck_assets=expected,
+                    flightdeck_version=json.loads((run/'flightdeck/dist/version.json').read_text()),
+                    failure_kind='bundled_asset_validation',
+                    failure_recorded_at=dt.datetime.now(dt.timezone.utc).isoformat())
+    raise ValueError('No asset validation failure reproduced; preserve current state.')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['build', 'prepare', 'public-assets', 'amend-listing', 'prepare-public', 'publish-public', 'resume-build', 'publish', 'readback', 'status', 'dry-run', 'restore-history', 'reconcile-build'])
+    parser.add_argument('action', choices=['build', 'prepare', 'public-assets', 'amend-listing', 'prepare-public', 'publish-public', 'resume-build', 'publish', 'readback', 'status', 'dry-run', 'restore-history', 'reconcile-build', 'fail-build'])
     parser.add_argument('--evidence', type=Path, help='Reviewed private missing-ledger reconstruction evidence; never replaces an existing ledger.')
     parser.add_argument('--day', default=dt.datetime.now(ZoneInfo('Australia/Perth')).date().isoformat())
     parser.add_argument('--committed-source', action='store_true', help='First-publication only: preserve incompatible active edits and validate exact committed snapshots.')
@@ -256,6 +280,12 @@ def main():
             restored['reconstruction_evidence_sha256'] = digest(a.evidence)
             save(ledger_path, restored)
             print(json.dumps(restored, indent=2)); return
+        if a.action == 'fail-build':
+            observed = prerequisites(a.flightdeck)
+            s = fail_build(ledger['runs'][a.day], run, os.environ.get('SESSION_ID'), observed['history'])
+            ledger['runs'][a.day] = s
+            save(ledger_path, ledger); save(run/'state.json', s)
+            print(json.dumps(s, indent=2)); return
         if a.action == 'reconcile-build':
             state = ledger['runs'][a.day]
             archived = json.loads(command(['bun',Path(env['AUTOPILOT_REPO'])/'clis/sessions.ts',
@@ -308,7 +338,13 @@ def main():
             import shutil
             shutil.copyfile(wm/'app/build/app/outputs/flutter-apk/app-release.apk',run/'app-release.apk')
             s['apk_sha256']=digest(run/'app-release.apk')
-            verify_bundled_apk(run/'app-release.apk',s['flightdeck_assets'])
+            try:
+                verify_bundled_apk(run/'app-release.apk',s['flightdeck_assets'])
+            except (KeyError, ValueError) as error:
+                s['failure'] = str(error)
+                s['failure_kind'] = 'bundled_asset_validation'
+                update('failed_before_delivery')
+                raise
             logged([wm/'app/android/gradlew','testDebugUnitTest'],wm/'app/android','android-unit-tests')
             update('built')
         else:
@@ -331,7 +367,13 @@ def main():
                 import shutil
                 shutil.copyfile(wm/'app/build/app/outputs/flutter-apk/app-release.apk',run/'app-release.apk')
                 s['apk_sha256']=digest(run/'app-release.apk')
-                verify_bundled_apk(run/'app-release.apk',s['flightdeck_assets'])
+                try:
+                    verify_bundled_apk(run/'app-release.apk',s['flightdeck_assets'])
+                except (KeyError, ValueError) as error:
+                    s['failure'] = str(error)
+                    s['failure_kind'] = 'bundled_asset_validation'
+                    update('failed_before_delivery')
+                    raise
                 logged([wm/'app/android/gradlew','testDebugUnitTest'],wm/'app/android','resume-android-unit-tests');update('built')
             elif a.action=='prepare':
                 if s['stage']!='built': raise ValueError('Preparation requires built state.')

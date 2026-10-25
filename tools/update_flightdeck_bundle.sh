@@ -107,5 +107,7 @@ fi
 mkdir -p "$TARGET_DIR"
 rsync -a --delete "$FLIGHT_DECK_DIR/dist/" "$TARGET_DIR/"
 
+python3 "$REPO_DIR/tools/register_flightdeck_assets.py" "$REPO_DIR"
+
 echo "Bundled Flight Deck from $FLIGHT_DECK_DIR/dist"
 echo "  $TARGET_DIR"
