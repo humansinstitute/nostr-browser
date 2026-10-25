@@ -17,8 +17,6 @@ command -v flutter >/dev/null 2>&1 || {
 
 "$REPO_DIR/tools/ios/build_core.sh"
 
-"$REPO_DIR/tools/update_flightdeck_bundle.sh"
-
 echo "Fetching Flutter dependencies..."
 (
   cd "$APP_DIR"

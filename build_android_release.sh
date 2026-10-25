@@ -12,8 +12,6 @@ command -v flutter >/dev/null 2>&1 || {
   exit 1
 }
 
-"$REPO_DIR/tools/update_flightdeck_bundle.sh"
-
 export WMAPP_ANDROID_KEYSTORE="${WMAPP_ANDROID_KEYSTORE:-$DEFAULT_KEYSTORE}"
 export WMAPP_ANDROID_KEY_ALIAS="${WMAPP_ANDROID_KEY_ALIAS:-wmapp}"
 

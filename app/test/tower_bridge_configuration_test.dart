@@ -14,7 +14,6 @@ import 'package:wingman_app/src/features/browser/grasp_fips_bridge_script.dart';
 import 'fake_webview_platform.dart';
 
 void main() {
-  const local = 'http://localhost:47831';
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     SharedPreferencesAsyncPlatform.instance =
@@ -25,7 +24,6 @@ void main() {
           home: Scaffold(
               body: BrowserScreen(
         config: config,
-        localFlightDeckUrl: local,
         bridge: NativeCoreBridge(),
         signerStore: SignerStore(),
         onOpenDrawer: () {},
@@ -38,7 +36,7 @@ void main() {
       .where((s) => s.contains('const token ='))
       .toList();
 
-  for (final page in [local, 'https://deck.example/workspace']) {
+  for (final page in ['https://deck.example/workspace']) {
     testWidgets(
         'universal FIPS provider includes the Tower adapter at eligible $page',
         (tester) async {
@@ -79,6 +77,10 @@ void main() {
       fakeExecutedJavaScripts.clear();
       submitFakePageFinished(controllerIndex: 0, url: page);
       await tester.pumpAndSettle();
+      if (Uri.parse(page).scheme == 'http') {
+        expect(scripts(), isEmpty,
+            reason: 'unapproved HTTP loopback pages have no provider');
+      }
       await tester.pumpWidget(app(AppConfig.defaults().copyWith(
         towerUrl: 'https://tower.example',
         flightDeckUrl: 'https://deck.example',
@@ -90,7 +92,8 @@ void main() {
       fakeExecutedJavaScripts.clear();
       submitFakePageFinished(controllerIndex: 0, url: page);
       await tester.pumpAndSettle();
-      final supported = Uri.parse(page).scheme == 'https';
+      final supported = Uri.parse(page).scheme == 'https' ||
+          Uri.parse(page).host == 'localhost';
       expect(scripts(), supported ? hasLength(1) : isEmpty,
           reason:
               'HTTPS pages receive only a consent-gated generic provider; insecure non-local origins fail closed');

@@ -15,10 +15,10 @@ class GraspMessagePolicyTest {
         assertFalse(GraspMessagePolicy.accepts("WingmanGrasp", true, "http://app.example", "http://app.example"))
     }
 
-    @Test fun `bundled Flight Deck is exact port and main frame only`() {
-        assertTrue(GraspMessagePolicy.accepts("WingmanGrasp", true, "http://127.0.0.1:47831", "http://127.0.0.1:47831/drive"))
-        assertFalse(GraspMessagePolicy.accepts("WingmanGrasp", false, "http://127.0.0.1:47831", "http://127.0.0.1:47831/drive"))
-        assertFalse(GraspMessagePolicy.accepts("WingmanGrasp", true, "http://127.0.0.1:47832", "http://127.0.0.1:47832/drive"))
+    @Test fun `local WApp channel still requires matching native main frame origin`() {
+        assertTrue(GraspMessagePolicy.accepts("WingmanGrasp", true, "http://127.0.0.1:47832", "http://127.0.0.1:47832/drive"))
+        assertFalse(GraspMessagePolicy.accepts("WingmanGrasp", false, "http://127.0.0.1:47832", "http://127.0.0.1:47832/drive"))
+        assertFalse(GraspMessagePolicy.accepts("WingmanGrasp", true, "http://127.0.0.1:47832", "http://127.0.0.1:47833/drive"))
     }
 
     @Test fun `signer rejects iframe spoofing but preserves HTTP top frames`() {

@@ -77,26 +77,28 @@ def assets(directory):
     return {str(p.relative_to(directory)): digest(p) for p in sorted(directory.rglob('*')) if p.is_file()}
 
 
-def prepare_inactive_flavor_assets(wm):
-    """Flutter analyze checks flavor paths even when that flavor is not built.
-
-    Create only empty generated directories for the inactive Ambulando flavor;
-    never package its frontend into Wingman or alter the committed pubspec.
-    """
-    text = (wm/'app/pubspec.yaml').read_text()
-    for relative in re.findall(r'^    - path: (assets/ambulando/[^\n]*)\n      flavors:\n        - ambulando\s*$', text, re.MULTILINE):
-        path = wm/'app'/relative
-        if '..' in Path(relative).parts or any(x.is_symlink() for x in (path, *path.parents)):
-            raise ValueError('Unsafe inactive flavor asset directory.')
-        path.mkdir(parents=True, exist_ok=True)
+def verify_browser_apk(apk):
+    """Reject obsolete embedded application payloads in a browser release."""
+    import zipfile
+    with zipfile.ZipFile(apk) as archive:
+        if any('/assets/flightdeck/' in name or '/assets/ambulando/' in name
+               for name in archive.namelist()):
+            raise ValueError('APK contains a retired embedded application.')
 
 
-def verify_bundled_apk(apk, expected):
+def verify_retained_apk(apk, state):
+    """Historical readback verifies its pinned payload, never rebuilds it."""
+    if state.get('browser_only') is True:
+        verify_browser_apk(apk)
+        return
+    expected = state.get('flightdeck_assets')
+    if not isinstance(expected, dict) or not expected or not state.get('flightdeck_commit'):
+        raise ValueError('Retained legacy release requires exact frontend provenance.')
     import zipfile
     with zipfile.ZipFile(apk) as archive:
         for name, sha256 in expected.items():
-            if hashlib.sha256(archive.read('assets/flutter_assets/assets/flightdeck/'+name)).hexdigest() != sha256:
-                raise ValueError('APK Flight Deck asset differs: '+name)
+            if hashlib.sha256(archive.read('assets/flutter_assets/assets/flightdeck/' + name)).hexdigest() != sha256:
+                raise ValueError('Retained legacy APK payload differs: ' + name)
 
 
 def private_key_reference(path):
@@ -104,7 +106,7 @@ def private_key_reference(path):
         raise ValueError('Signing reference must be an owner-only regular file without symlinks.')
 
 
-def prerequisites(fd):
+def prerequisites():
     """Live read-only store/auth/identity inspection, no reservation or upload."""
     import shutil
     private_key_reference(KEYSTORE); private_key_reference(PASSWORD)
@@ -123,7 +125,7 @@ def prerequisites(fd):
         unresolved_days=pending, release_ready=ledger is not None and not pending,
         sources={str(repo): dict(commit=command(['git','rev-parse','HEAD'],repo),
                  branch=command(['git','branch','--show-current'],repo),
-                 status=command(['git','status','--porcelain'],repo)) for repo in (fd, ROOT)},
+                 status=command(['git','status','--porcelain'],repo)) for repo in (ROOT,)},
         tools={tool: bool(shutil.which(tool)) for tool in ('flutter','cargo','bun','gh')},
         zsp_present=ZSP.is_file())
 
@@ -159,7 +161,7 @@ def verify_public_delivery(s, run):
     metadata=prep.ApkInspector().inspect(target, run/'icon.png')
     if metadata.version_code != s['version_code'] or metadata.version_name != s['version_name']:
         raise ValueError('Anonymous APK version mismatch.')
-    verify_bundled_apk(target, s['flightdeck_assets'])
+    verify_retained_apk(target, s)
     listing = 'https://zapstore.dev/apps/'+PACKAGE
     with urllib.request.urlopen(listing, context=context, timeout=60) as response:
         if 'Nostr Browser' not in response.read().decode():
@@ -233,16 +235,13 @@ def fail_build(state, run, owner, history):
              'broker-sign.log','broker-upload.log','relay-publish.log','relay-publish-public.log',
              'github-assets.log','build-proof.json'))):
         raise ValueError('Only owned pre-publication asset-check failures can be recorded.')
-    expected = assets(run/'flightdeck/dist')
-    if not expected or not (run/'app-release.apk').is_file():
-        raise ValueError('Retained built APK and exact Flight Deck assets required.')
+    if not (run/'app-release.apk').is_file():
+        raise ValueError('Retained built APK required.')
     try:
-        verify_bundled_apk(run/'app-release.apk', expected)
+        verify_browser_apk(run/'app-release.apk')
     except (KeyError, ValueError) as error:
         return dict(state, stage='failed_before_delivery', failure=str(error),
                     apk_sha256=digest(run/'app-release.apk'),
-                    flightdeck_assets=expected,
-                    flightdeck_version=json.loads((run/'flightdeck/dist/version.json').read_text()),
                     failure_kind='bundled_asset_validation',
                     failure_recorded_at=dt.datetime.now(dt.timezone.utc).isoformat())
     raise ValueError('No asset validation failure reproduced; preserve current state.')
@@ -254,7 +253,6 @@ def main():
     parser.add_argument('--evidence', type=Path, help='Reviewed private missing-ledger reconstruction evidence; never replaces an existing ledger.')
     parser.add_argument('--day', default=dt.datetime.now(ZoneInfo('Australia/Perth')).date().isoformat())
     parser.add_argument('--committed-source', action='store_true', help='First-publication only: preserve incompatible active edits and validate exact committed snapshots.')
-    parser.add_argument('--flightdeck', type=Path, default=ROOT.parent / 'wm/flightdeck')
     a = parser.parse_args()
     if dt.date.fromisoformat(a.day).isoformat() != a.day: raise ValueError('Invalid day.')
     safe_private(PRIVATE); PRIVATE.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -270,18 +268,18 @@ def main():
         run = PRIVATE/a.day
         env = {**os.environ, 'JAVA_HOME': JAVA, 'AUTOPILOT_REPO': str(Path(os.environ.get('AUTOPILOT_REPO', ROOT.parent/'wm/autopilot'))), 'RUSTUP_TOOLCHAIN':'stable'}
         if a.action == 'dry-run':
-            print(json.dumps(prerequisites(a.flightdeck), indent=2)); return
+            print(json.dumps(prerequisites(), indent=2)); return
         if a.action == 'restore-history':
             if ledger_path.exists() or not a.evidence:
                 raise ValueError('Restore requires reviewed evidence and an absent ledger; preserve existing bytes.')
             safe_private(a.evidence)
-            observed = prerequisites(a.flightdeck)
+            observed = prerequisites()
             restored = restore_history(json.loads(a.evidence.read_text()), observed['history'])
             restored['reconstruction_evidence_sha256'] = digest(a.evidence)
             save(ledger_path, restored)
             print(json.dumps(restored, indent=2)); return
         if a.action == 'fail-build':
-            observed = prerequisites(a.flightdeck)
+            observed = prerequisites()
             s = fail_build(ledger['runs'][a.day], run, os.environ.get('SESSION_ID'), observed['history'])
             ledger['runs'][a.day] = s
             save(ledger_path, ledger); save(run/'state.json', s)
@@ -290,7 +288,7 @@ def main():
             state = ledger['runs'][a.day]
             archived = json.loads(command(['bun',Path(env['AUTOPILOT_REPO'])/'clis/sessions.ts',
                 'archive-info',state['owner'],'--json']))['session']
-            observed = prerequisites(a.flightdeck)
+            observed = prerequisites()
             s = reconcile_build(state,run,observed['history'],archived)
             ledger['runs'][a.day] = s
             save(ledger_path,ledger); save(run/'state.json',s)
@@ -306,8 +304,7 @@ def main():
             s['stage'] = stage; save(ledger_path, ledger); save(run/'state.json', s)
         if a.action == 'build':
             if a.day != dt.datetime.now(ZoneInfo('Australia/Perth')).date().isoformat(): raise ValueError('Build requires current Perth day.')
-            if not env.get('FLIGHT_DECK_PG_APP_NPUB'): raise ValueError('Verified Flight Deck app identity required.')
-            for repo in (a.flightdeck, ROOT):
+            for repo in (ROOT,):
                 if command(['git','status','--porcelain'],repo) and not a.committed_source: raise ValueError('Commit validated compatible source first; preserve concurrent work.')
             if not ledger_path.exists(): raise ValueError('Restore/reconstruct the private Android ledger before building; never silently start empty.')
             private_key_reference(KEYSTORE); private_key_reference(PASSWORD)
@@ -315,31 +312,20 @@ def main():
             source_commit=command(['git','rev-parse','HEAD'])
             source_version=re.search(r'^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+',command(['git','show',source_commit+':app/pubspec.yaml']),re.MULTILINE)
             if not source_version: raise ValueError('Committed source version missing.')
-            s=reserve(ledger,a.day,os.environ.get('SESSION_ID'),history['maxVersionCode'],source_version.group(1));s['planned_source_commit']=source_commit; s['excluded_uncommitted_source']={str(repo.name):command(['git','status','--porcelain'],repo) for repo in (a.flightdeck,ROOT)}; save(ledger_path,ledger)
+            s=reserve(ledger,a.day,os.environ.get('SESSION_ID'),history['maxVersionCode'],source_version.group(1));s['browser_only']=True;s['planned_source_commit']=source_commit; s['excluded_uncommitted_source']={str(repo.name):command(['git','status','--porcelain'],repo) for repo in (ROOT,)}; save(ledger_path,ledger)
             run.mkdir(mode=0o700);update('building')
-            fd=run/'flightdeck';wm=run/'wmapp'
+            wm=run/'wmapp'
             with source_lock(ROOT):
-                s['flightdeck_commit']=snapshot(a.flightdeck,fd)
                 s['source_commit']=snapshot(ROOT,wm,source_commit)
             update('building')
-            meta=json.loads((fd/'.build-meta.json').read_text());notes=json.loads((fd/'release-notes.json').read_text())
-            number=max([meta['absoluteVersion']]+[x['buildNumber'] for x in notes['releases']])
-            env.update(FLIGHTDECK_BUILD_NUMBER=str(number),FLIGHTDECK_BUILD_ID=f"wmapp-{s['flightdeck_commit'][:12]}-{number}",SOURCE_DATE_EPOCH=command(['git','log','-1','--format=%ct',s['flightdeck_commit']],a.flightdeck),FLIGHT_DECK_DIR=str(fd))
-            logged(['bun','install','--frozen-lockfile'],fd,'fd-install')
-            for script in ('check:public-source','test:release','build','verify:dist'): logged(['bun','run',script],fd,'fd-'+script.replace(':','-'))
-            s['flightdeck_version']=json.loads((fd/'dist/version.json').read_text());s['flightdeck_assets']=assets(fd/'dist')
-            if s['flightdeck_version']['buildId'] != env['FLIGHTDECK_BUILD_ID']: raise ValueError('Flight Deck build ID mismatch.')
-            logged([wm/'tools/update_flightdeck_bundle.sh','--use-existing-dist'],wm,'bundle')
-            if assets(wm/'app/assets/flightdeck') != s['flightdeck_assets']: raise ValueError('Bundled assets differ.')
             env.update(WMAPP_ANDROID_CHANNEL='nightly',WMAPP_ANDROID_KEYSTORE=str(KEYSTORE),WMAPP_ANDROID_STORE_PASSWORD=PASSWORD.read_text(),WMAPP_ANDROID_KEY_PASSWORD=PASSWORD.read_text(),WMAPP_ANDROID_KEY_ALIAS='wingman-nightly')
-            prepare_inactive_flavor_assets(wm)
             logged(['cargo','build','--locked','--release','-p','wmapp-drive-fs'],wm,'drive-fs-build')
             for args,label in [(['flutter','pub','get'],'pub'),(['flutter','analyze'],'analyze'),(['flutter','test'],'flutter-test'),(['flutter','build','apk','--release','--target-platform','android-arm64','--build-name',s['version_name'],'--build-number',str(s['version_code'])],'apk-build')]: logged(args,wm/'app',label)
             import shutil
             shutil.copyfile(wm/'app/build/app/outputs/flutter-apk/app-release.apk',run/'app-release.apk')
             s['apk_sha256']=digest(run/'app-release.apk')
             try:
-                verify_bundled_apk(run/'app-release.apk',s['flightdeck_assets'])
+                verify_browser_apk(run/'app-release.apk')
             except (KeyError, ValueError) as error:
                 s['failure'] = str(error)
                 s['failure_kind'] = 'bundled_asset_validation'
@@ -352,13 +338,12 @@ def main():
             if a.action!='readback' and s['owner']!=os.environ.get('SESSION_ID'): raise ValueError('Only reservation owner can mutate release.')
             if a.action=='resume-build':
                 require_resume(s,os.environ.get('SESSION_ID'),run)
-                fd=run/'flightdeck';wm=run/'wmapp'
-                for name,key in [('flightdeck','flightdeck_commit'),('wmapp','source_commit')]:
+                if s.get('browser_only') is not True: raise ValueError('Legacy build cannot resume as browser-only; reconcile its original evidence.')
+                wm=run/'wmapp'
+                for name,key in [('wmapp','source_commit')]:
                     proof=json.loads((run/(name+'-source.json')).read_text())
                     if digest(run/(name+'.tar'))!=proof['archive_sha256']: raise ValueError('Source archive changed.')
                     s[key]=proof['commit']
-                s['flightdeck_version']=json.loads((fd/'dist/version.json').read_text());s['flightdeck_assets']=assets(fd/'dist')
-                if assets(wm/'app/assets/flightdeck')!=s['flightdeck_assets']: raise ValueError('Bundled Flight Deck differs.')
                 private_key_reference(KEYSTORE);private_key_reference(PASSWORD)
                 env.update(WMAPP_ANDROID_CHANNEL='nightly',WMAPP_ANDROID_KEYSTORE=str(KEYSTORE),WMAPP_ANDROID_STORE_PASSWORD=PASSWORD.read_text(),WMAPP_ANDROID_KEY_PASSWORD=PASSWORD.read_text(),WMAPP_ANDROID_KEY_ALIAS='wingman-nightly',RUSTUP_TOOLCHAIN='stable')
                 update('building')
@@ -368,7 +353,7 @@ def main():
                 shutil.copyfile(wm/'app/build/app/outputs/flutter-apk/app-release.apk',run/'app-release.apk')
                 s['apk_sha256']=digest(run/'app-release.apk')
                 try:
-                    verify_bundled_apk(run/'app-release.apk',s['flightdeck_assets'])
+                    verify_browser_apk(run/'app-release.apk')
                 except (KeyError, ValueError) as error:
                     s['failure'] = str(error)
                     s['failure_kind'] = 'bundled_asset_validation'
@@ -394,7 +379,7 @@ def main():
                 if metadata.version_code!=s['version_code'] or metadata.version_name!=s['version_name']: raise ValueError('Reserved version mismatch.')
                 badging=command([prep.find_android_tools()[0],'dump','badging',run/'app-release.apk'])
                 if "application-label:'Nostr Browser'" not in badging: raise ValueError('Nightly visible name mismatch.')
-                notes=f"Nostr Browser {a.day}\n\nWMAPP source: {s['source_commit']}\nFlight Deck source: {s['flightdeck_commit']}\nFlight Deck build: {s['flightdeck_version']['buildId']}\n"
+                notes=f"Nostr Browser {a.day}\n\nWMAPP source: {s['source_commit']}\n"
                 (run/'notes.md').write_text(notes)
                 config=(ROOT/'zapstore-nightly.yaml').read_text().replace('./app/build/app/outputs/flutter-apk/app-release.apk',str(run/'app-release.apk')).replace('./docs/deploy/nightly-zapstore-notes.md',str(run/'notes.md')).replace('pubkey: ""', 'pubkey: '+NPUB)
                 (run/'zapstore.yaml').write_text(config)
@@ -410,21 +395,21 @@ def main():
                     if r.returncode==0: break
                     if 'timestamp changed' not in r.stderr: raise ValueError(r.stderr.strip())
                 else: raise ValueError('Certificate proof timestamp cannot match broker; no publication.')
-                s['source_archive_sha256']=digest(run/'wmapp.tar');s['flightdeck_archive_sha256']=digest(run/'flightdeck.tar');update('prepared')
+                s['source_archive_sha256']=digest(run/'wmapp.tar');update('prepared')
             elif a.action=='public-assets':
                 if s['stage']!='prepared': raise ValueError('Public assets require prepared state; reconcile uncertain GitHub outcome before retry.')
-                proof={k:s[k] for k in ('version_name','version_code','source_commit','flightdeck_commit','flightdeck_version','flightdeck_assets','apk_sha256','certificate_sha256','source_archive_sha256','flightdeck_archive_sha256')}
+                proof={k:s[k] for k in ('version_name','version_code','source_commit','browser_only','apk_sha256','certificate_sha256','source_archive_sha256')}
                 proof.update(package=PACKAGE,publisher=NPUB)
                 (run/'build-proof.json').write_text(json.dumps(proof,indent=2)+'\n')
                 release='nightly-'+a.day+'-'+str(s['version_code'])
                 existing=subprocess.run(['gh','release','view',release,'--repo','OtherStuffAI/wingman-nightly'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
                 if existing.returncode==0: raise ValueError('GitHub release already exists; reconcile exact hashes, never overwrite.')
                 update('public_assets_pending')
-                logged(['gh','release','create',release,'--repo','OtherStuffAI/wingman-nightly','--title','Nostr Browser '+a.day,'--notes-file',run/'notes.md',run/'app-release.apk',run/'wmapp.tar',run/'flightdeck.tar',run/'build-proof.json'],ROOT, 'github-assets')
+                logged(['gh','release','create',release,'--repo','OtherStuffAI/wingman-nightly','--title','Nostr Browser '+a.day,'--notes-file',run/'notes.md',run/'app-release.apk',run/'wmapp.tar',run/'build-proof.json'],ROOT, 'github-assets')
                 s['public_release_url']='https://github.com/OtherStuffAI/wingman-nightly/releases/tag/'+release
                 public=run/'github-readback';public.mkdir(mode=0o700)
                 logged(['gh','release','download',release,'--repo','OtherStuffAI/wingman-nightly','--dir',public],ROOT,'github-assets-readback')
-                for filename in ('app-release.apk','wmapp.tar','flightdeck.tar','build-proof.json'):
+                for filename in ('app-release.apk','wmapp.tar','build-proof.json'):
                     if digest(public/filename)!=digest(run/filename): raise ValueError('Public GitHub asset hash mismatch.')
                 update('prepared')
             elif a.action=='amend-listing':

@@ -30,8 +30,6 @@ export XCODE_XCCONFIG_FILE="$SIGNING_CONFIG"
 
 "$REPO_DIR/tools/ios/build_core.sh"
 
-"$REPO_DIR/tools/update_flightdeck_bundle.sh"
-
 if [[ "$EXPORT_OPTIONS" == *External* ]]; then MODE=external; else MODE=internal; fi
 EXPORT_OPTIONS="$(python3 -c 'import sys; sys.path.insert(0,sys.argv[1]); import testflight_release as r; print(r.options(sys.argv[2]))' "$REPO_DIR/tools/ios" "$MODE")"
 

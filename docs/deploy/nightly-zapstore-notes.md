@@ -1,2 +1,2 @@
-Wingman Nightly is a daily preview. Each release records the exact WMAPP and
-Flight Deck source commits, Flight Deck build identity and asset hashes.
+Nightly Nostr Browser build. Generated release notes record the exact browser
+source commit, source archive hash and APK identity. No frontend is bundled.

@@ -13,7 +13,7 @@ import 'mesh_auth_signing_test.dart' show Harness, appPage;
 import 'grasp_fips_transport_test.dart' show endpoint;
 
 const page = 'https://gitworkshop.example/repository';
-const localFlightDeckPage = 'http://127.0.0.1:47831/flightdeck';
+const localFlightDeckPage = 'http://127.0.0.1:47832/flightdeck';
 Map<String, dynamic> auth([String target = '$endpoint/owner/repo.git']) => {
       'kind': 27235,
       'created_at': DateTime.now().millisecondsSinceEpoch ~/ 1000,
@@ -368,7 +368,7 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
   testWidgets(
-      'local bundled Flight Deck receives Drive-capable GRASP transport',
+      'explicitly approved local WApp receives Drive-capable GRASP transport',
       (tester) async {
     final h = Harness(localFlightDeckUrl: localFlightDeckPage);
     await h.start(tester);
@@ -378,7 +378,7 @@ void main() {
     await tester.pumpAndSettle();
     final script =
         fakeExecutedJavaScripts.lastWhere((s) => s.contains("'fipsTransport'"));
-    expect(script, contains('location.origin !== "http://127.0.0.1:47831"'));
+    expect(script, contains('location.origin !== "http://127.0.0.1:47832"'));
     expect(script, contains('connectDrive'));
     expect(script, contains('save:true'));
     await tester.pumpWidget(const SizedBox());

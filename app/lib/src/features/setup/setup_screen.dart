@@ -16,7 +16,6 @@ class SetupScreen extends StatefulWidget {
     required this.onConfigChanged,
     required this.onClearBrowserData,
     required this.onOpenFipsApp,
-    this.localFlightDeckUrl = '',
     super.key,
   });
 
@@ -28,14 +27,12 @@ class SetupScreen extends StatefulWidget {
   final ValueChanged<AppConfig> onConfigChanged;
   final Future<void> Function() onClearBrowserData;
   final ValueChanged<String> onOpenFipsApp;
-  final String localFlightDeckUrl;
 
   @override
   State<SetupScreen> createState() => _SetupScreenState();
 }
 
 class _SetupScreenState extends State<SetupScreen> {
-  late final TextEditingController _flightDeckController;
   late List<String> _trustedOrigins;
   String? _message;
   String? _fipsMessage;
@@ -47,16 +44,8 @@ class _SetupScreenState extends State<SetupScreen> {
   @override
   void initState() {
     super.initState();
-    _flightDeckController =
-        TextEditingController(text: widget.config.flightDeckUrl);
     _trustedOrigins = List.of(widget.config.trustedOrigins);
     _refreshFipsStatus();
-  }
-
-  @override
-  void dispose() {
-    _flightDeckController.dispose();
-    super.dispose();
   }
 
   @override
@@ -99,11 +88,9 @@ class _SetupScreenState extends State<SetupScreen> {
       );
 
   Widget _sitePermissionsCard() {
-    final builtIn = SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl);
     final external = SignerPolicy.normalizeOrigin(widget.config.flightDeckUrl);
     final legacyTower = SignerPolicy.normalizeOrigin(widget.config.towerUrl);
     final origins = <String>{
-      if (builtIn.isNotEmpty) builtIn,
       if (external.isNotEmpty) external,
       if (legacyTower.isNotEmpty) legacyTower,
       for (final value in _trustedOrigins)
@@ -131,33 +118,21 @@ class _SetupScreenState extends State<SetupScreen> {
             for (final origin in origins)
               ListTile(
                 key: ValueKey('site-permission-$origin'),
-                leading: Icon(
-                  origin == builtIn
-                      ? Icons.home_outlined
-                      : Icons.language_outlined,
-                ),
+                leading: const Icon(Icons.language_outlined),
                 title: SelectableText(origin),
                 subtitle: Text(
-                  origin == builtIn
-                      ? 'Built-in Flight Deck · included with Nostr Browser'
-                      : origin == external
-                          ? 'External Flight Deck · exact origin only'
-                          : origin == legacyTower
-                              ? 'Legacy site permission · exact origin only'
-                              : 'Site permission · exact origin only',
+                  origin == external
+                      ? 'External Flight Deck · exact origin only'
+                      : origin == legacyTower
+                          ? 'Legacy site permission · exact origin only'
+                          : 'Site permission · exact origin only',
                 ),
-                trailing: origin == builtIn
-                    ? const Tooltip(
-                        message: 'Built-in permission',
-                        child: Icon(Icons.lock_outline),
-                      )
-                    : IconButton(
-                        key: ValueKey('revoke-site-permission-$origin'),
-                        tooltip: 'Revoke $origin',
-                        onPressed:
-                            _busy ? null : () => _revokeSitePermission(origin),
-                        icon: const Icon(Icons.delete_outline),
-                      ),
+                trailing: IconButton(
+                  key: ValueKey('revoke-site-permission-$origin'),
+                  tooltip: 'Revoke $origin',
+                  onPressed: _busy ? null : () => _revokeSitePermission(origin),
+                  icon: const Icon(Icons.delete_outline),
+                ),
               ),
           ],
         ),
@@ -212,8 +187,7 @@ class _SetupScreenState extends State<SetupScreen> {
       child: ExpansionTile(
         key: const ValueKey('advanced-diagnostics'),
         title: const Text('Technical controls and compatibility'),
-        subtitle: const Text(
-            'FIPS details, external Flight Deck, and private relay traces'),
+        subtitle: const Text('FIPS details and private relay traces'),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         expandedCrossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -229,33 +203,6 @@ class _SetupScreenState extends State<SetupScreen> {
             const SizedBox(height: 8),
             Text(_fipsMessage!),
           ],
-          const SizedBox(height: 20),
-          Text('External Flight Deck',
-              style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 4),
-          const Text(
-            'Optional compatibility setting. Built-in Flight Deck works automatically. Only the exact external origin is allowed.',
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            key: const ValueKey('external-flight-deck-url'),
-            controller: _flightDeckController,
-            keyboardType: TextInputType.url,
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              labelText: 'External Flight Deck URL',
-              hintText: 'https://flight-deck.example',
-            ),
-          ),
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: OutlinedButton(
-              key: const ValueKey('save-external-flight-deck'),
-              onPressed: _busy ? null : _saveExternalFlightDeck,
-              child: const Text('Save external Flight Deck'),
-            ),
-          ),
           const SizedBox(height: 20),
           SwitchListTile(
             key: const ValueKey('private-relay-diagnostics'),
@@ -715,46 +662,11 @@ class _SetupScreenState extends State<SetupScreen> {
       flightDeckUrl: origin == external ? '' : widget.config.flightDeckUrl,
       towerUrl: origin == legacyTower ? '' : widget.config.towerUrl,
     );
-    if (origin == external) _flightDeckController.clear();
     setState(() {
       _trustedOrigins = trustedOrigins;
       _message = 'Permission revoked for $origin.';
     });
     widget.onConfigChanged(next);
-  }
-
-  void _saveExternalFlightDeck() {
-    final value = _flightDeckController.text.trim();
-    final nextOrigin = SignerPolicy.normalizeOrigin(value);
-    if (value.isNotEmpty && nextOrigin.isEmpty) {
-      setState(() {
-        _message = 'Enter a complete http:// or https:// Flight Deck URL.';
-      });
-      return;
-    }
-
-    final previousOrigin =
-        SignerPolicy.normalizeOrigin(widget.config.flightDeckUrl);
-    final changed = value != widget.config.flightDeckUrl;
-    final trustedOrigins = changed && previousOrigin.isNotEmpty
-        ? _trustedOrigins
-            .where(
-              (entry) => SignerPolicy.normalizeOrigin(entry) != previousOrigin,
-            )
-            .toList(growable: false)
-        : List<String>.of(_trustedOrigins);
-    setState(() {
-      _trustedOrigins = trustedOrigins;
-      _message = changed
-          ? 'External Flight Deck updated. Previous pairings were revoked.'
-          : 'External Flight Deck is unchanged.';
-    });
-    widget.onConfigChanged(
-      widget.config.copyWith(
-        flightDeckUrl: value,
-        trustedOrigins: trustedOrigins,
-      ),
-    );
   }
 
   Future<void> _setRelayDiagnostics(bool enabled) async {

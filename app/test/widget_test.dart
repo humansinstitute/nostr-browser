@@ -12,7 +12,6 @@ import 'package:shared_preferences_platform_interface/shared_preferences_async_p
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:wingman_app/src/app.dart';
 import 'package:wingman_app/src/core/app_config.dart';
-import 'package:wingman_app/src/core/flight_deck_update_models.dart';
 import 'package:wingman_app/src/core/nostr_crypto.dart';
 import 'package:wingman_app/src/features/browser/nostr_profile_relay_client.dart';
 import 'package:wingman_app/src/core/native_core_bridge.dart';
@@ -576,16 +575,17 @@ void main() {
     expect(fakeClearCookieCalls, 1);
   });
 
-  testWidgets(
-      'packaged Flight Deck uses live titles, fallbacks, and SPA updates',
+  testWidgets('external web page uses live titles, fallbacks, and SPA updates',
       (tester) async {
-    const flightDeckUrl = 'http://127.0.0.1:47831/';
+    const flightDeckUrl = 'https://deck.example/';
+    await BrowserBookmarkStore().save('npub-title-test',
+        [const BrowserBookmark(title: 'Flight Deck', url: flightDeckUrl)]);
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: BrowserScreen(
-            config: AppConfig.defaults(),
-            localFlightDeckUrl: flightDeckUrl,
+            config:
+                AppConfig.defaults().copyWith(deviceNpub: 'npub-title-test'),
             bridge: NativeCoreBridge(),
             signerStore: SignerStore(),
             onOpenDrawer: () {},
@@ -606,7 +606,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(fakeLoadedRequestUrls.single, flightDeckUrl);
-    expect(find.text('Flight Deck'), findsOneWidget);
+    expect(find.text('deck.example'), findsOneWidget);
 
     setFakePageTitle(
       controllerIndex: 0,
@@ -637,12 +637,12 @@ void main() {
       message: '   ',
     );
     await tester.pump();
-    expect(find.text('Flight Deck'), findsOneWidget);
+    expect(find.text('deck.example'), findsOneWidget);
 
     setFakeTitleRetrievalFailure(controllerIndex: 0, fails: true);
     submitFakePageFinished(controllerIndex: 0, url: flightDeckUrl);
     await tester.pumpAndSettle();
-    expect(find.text('Flight Deck'), findsOneWidget);
+    expect(find.text('deck.example'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     await tester.tap(find.byTooltip('Close tab'));
@@ -677,12 +677,14 @@ void main() {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     try {
       const storageKey = 'wingman.browser.tabs.v3.npub-tab-appearance';
+      await BrowserBookmarkStore().save('npub-tab-appearance', [
+        const BrowserBookmark(title: 'Web app', url: 'https://app.example/')
+      ]);
       Widget browser() => MaterialApp(
               home: Scaffold(
                   body: BrowserScreen(
             config: AppConfig.defaults()
                 .copyWith(deviceNpub: 'npub-tab-appearance'),
-            localFlightDeckUrl: 'http://127.0.0.1:47831/',
             bridge: NativeCoreBridge(),
             signerStore: SignerStore(),
             onOpenDrawer: () {},
@@ -712,7 +714,7 @@ void main() {
           controllerIndex: 0,
           channel: 'WingmanSigner',
           message:
-              '{"id":"open-built-in","method":"navigateTab","params":{"url":"http://127.0.0.1:47831/"}}');
+              '{"id":"open-built-in","method":"navigateTab","params":{"url":"https://app.example/"}}');
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('New tab'));
       await tester.pumpAndSettle();
@@ -722,10 +724,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(activeBrowserStackIndex(tester), 1);
       await editPrefix(' WORK:  ');
-      expect(find.text('WORK: Flight Deck'), findsOneWidget);
+      expect(find.text('WORK: app.example'), findsOneWidget);
       setFakePageTitle(controllerIndex: 0, title: 'Tasks');
-      submitFakePageFinished(
-          controllerIndex: 0, url: 'http://127.0.0.1:47831/');
+      submitFakePageFinished(controllerIndex: 0, url: 'https://app.example/');
       await tester.pumpAndSettle();
       expect(find.text('WORK: Tasks'), findsOneWidget);
       final saved =
@@ -760,7 +761,7 @@ void main() {
       await tester.pumpWidget(browser());
       await tester.pumpAndSettle();
       expect(find.text('New Tab'), findsOneWidget);
-      expect(find.text('WORK: Flight Deck'), findsNothing);
+      expect(find.text('WORK: app.example'), findsNothing);
       expect(fakeLoadedRequestUrls, isEmpty);
       final retained =
           jsonDecode((await SharedPreferencesAsync().getString(storageKey))!)
@@ -777,7 +778,7 @@ void main() {
   testWidgets('restored generic web labels are replaced by the live title',
       (tester) async {
     const signer = 'npub-restored-live-title';
-    const flightDeckUrl = 'http://127.0.0.1:47831/';
+    const flightDeckUrl = 'https://deck.example/';
     final preferences = SharedPreferencesAsync();
     await preferences.setString('wingman.browser.last_signer_npub.v1', signer);
     await preferences.setString(
@@ -787,13 +788,15 @@ void main() {
           ']}',
     );
 
-    await BrowserBookmarkStore().saveBuiltInStartup(signer, true);
+    await BrowserBookmarkStore().save(signer, [
+      const BrowserBookmark(
+          title: 'Flight Deck', url: flightDeckUrl, startup: true)
+    ]);
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: BrowserScreen(
             config: AppConfig.defaults().copyWith(deviceNpub: signer),
-            localFlightDeckUrl: flightDeckUrl,
             bridge: NativeCoreBridge(),
             signerStore: SignerStore(),
             onOpenDrawer: () {},
@@ -824,7 +827,6 @@ void main() {
   testWidgets('legacy snapshots never seed packaged Flight Deck',
       (tester) async {
     const signer = 'npub-flight-deck-upgrade';
-    const flightDeckUrl = 'http://127.0.0.1:47831/';
     const tabsKey = 'wingman.browser.tabs.v1.$signer';
     final preferences = SharedPreferencesAsync();
     await preferences.setString(
@@ -837,7 +839,6 @@ void main() {
         home: Scaffold(
           body: BrowserScreen(
             config: AppConfig.defaults().copyWith(deviceNpub: signer),
-            localFlightDeckUrl: flightDeckUrl,
             bridge: NativeCoreBridge(),
             signerStore: SignerStore(),
             onOpenDrawer: () {},
@@ -961,52 +962,6 @@ void main() {
 
     expect(fakeClearCookieCalls, 1);
     expect(await preferences.getString(profileKey), 'npub-new');
-  });
-
-  testWidgets('Wingman shell reloads local Flight Deck after automatic update',
-      (tester) async {
-    const flightDeckUrl = 'http://127.0.0.1:47831/';
-    final updates = _ShellFlightDeckUpdateController(
-      _flightDeckSnapshot(
-        phase: FlightDeckUpdatePhase.idle,
-        active: 'Build 100 (packaged)',
-      ),
-    );
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: ShellHome(
-          config: AppConfig.defaults(),
-          localFlightDeckUrl: flightDeckUrl,
-          flightDeckUpdates: updates,
-          bridge: NativeCoreBridge(),
-          signerStore: SignerStore(),
-          onConfigChanged: (_) {},
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    submitFakeJavaScriptMessage(
-        controllerIndex: 0,
-        channel: 'WingmanSigner',
-        message:
-            '{"id":"open-built-in","method":"navigateTab","params":{"url":"$flightDeckUrl"}}');
-    await tester.pumpAndSettle();
-    expect(fakeLoadedRequestUrls, [flightDeckUrl]);
-    expect(fakeReloadCalls, 0);
-
-    updates.activate('Build 101 (ota-test)');
-    await tester.pump();
-    await tester.pump();
-
-    expect(fakeReloadCalls, 1);
-
-    updates.republish();
-    await tester.pump();
-    await tester.pump();
-
-    expect(fakeReloadCalls, 1);
   });
 
   testWidgets(
@@ -1865,64 +1820,4 @@ void main() {
 
     expect(loggedOut, isTrue);
   });
-}
-
-FlightDeckUpdateSnapshot _flightDeckSnapshot({
-  required FlightDeckUpdatePhase phase,
-  required String active,
-}) {
-  return FlightDeckUpdateSnapshot(
-    phase: phase,
-    packagedVersion: 'Build 100 (packaged)',
-    activeVersion: active,
-    previousVersion: '',
-    availableVersion: '',
-    failedVersion: '',
-    message: phase.name,
-    error: '',
-    lastCheckAt: DateTime.utc(2026, 9, 11),
-    lastSuccessAt: null,
-    lastFailureAt: null,
-    enabled: true,
-    busy: false,
-  );
-}
-
-class _ShellFlightDeckUpdateController extends FlightDeckUpdateController {
-  _ShellFlightDeckUpdateController(this._snapshot);
-
-  FlightDeckUpdateSnapshot _snapshot;
-
-  @override
-  String? get activeRootPath => null;
-
-  @override
-  FlightDeckUpdateSnapshot get snapshot => _snapshot;
-
-  void activate(String version) {
-    _snapshot = _flightDeckSnapshot(
-      phase: FlightDeckUpdatePhase.active,
-      active: version,
-    );
-    notifyListeners();
-  }
-
-  void republish() {
-    notifyListeners();
-  }
-
-  @override
-  Future<void> applyAvailable() async {}
-
-  @override
-  Future<void> checkForUpdates({bool applyAutomatically = false}) async {}
-
-  @override
-  Future<void> initialize() async {}
-
-  @override
-  Future<void> reportServeFailure(String message) async {}
-
-  @override
-  Future<void> rollback() async {}
 }

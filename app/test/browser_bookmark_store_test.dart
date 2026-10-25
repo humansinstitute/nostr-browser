@@ -1,3 +1,5 @@
+import 'package:wingman_app/src/features/nstack/nstack_models.dart';
+import 'package:wingman_app/src/core/app_config.dart';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -7,6 +9,45 @@ import 'package:shared_preferences_platform_interface/shared_preferences_async_p
 import 'package:wingman_app/src/features/browser/browser_bookmark_store.dart';
 
 void main() {
+  test('legacy NStack slots are excluded without classifying external titles',
+      () {
+    final raw = <String, dynamic>{
+      'built_in_startup': true,
+      'bookmarks': [
+        {
+          'title': 'Local slot',
+          'url': 'http://127.0.0.1:47831/workspace',
+          'startup': true
+        },
+        {
+          'title': 'Flight Deck',
+          'url': 'https://deck.example/workspace',
+          'startup': true
+        },
+        {
+          'title': 'Local WApp',
+          'url': 'http://localhost:8080/app',
+          'startup': true
+        },
+      ],
+    };
+    final settings = NStackBrowserSettings.tryParse(raw);
+    expect(settings.bookmarks.map((b) => b.url),
+        ['https://deck.example/workspace', 'http://localhost:8080/app']);
+    expect(settings.bookmarks.every((b) => b.startup), isTrue);
+    expect((raw['bookmarks'] as List).length, 3);
+    final config = AppConfig.defaults().copyWith(
+      flightDeckUrl: 'http://127.0.0.1:47831/',
+      trustedOrigins: [
+        'http://127.0.0.1:47831',
+        'http://localhost:8080',
+        'https://deck.example'
+      ],
+    );
+    expect(config.effectiveTrustedOrigins(),
+        ['http://localhost:8080', 'https://deck.example']);
+  });
+
   setUp(() {
     SharedPreferencesAsyncPlatform.instance =
         InMemorySharedPreferencesAsync.empty();
@@ -89,8 +130,10 @@ void main() {
 
     await store.save('npub-example-user', bookmarks);
 
-    expect(await BrowserBookmarkStore().load('npub-example-user'), hasLength(1));
-    final restored = (await BrowserBookmarkStore().load('npub-example-user')).single;
+    expect(
+        await BrowserBookmarkStore().load('npub-example-user'), hasLength(1));
+    final restored =
+        (await BrowserBookmarkStore().load('npub-example-user')).single;
     expect(restored.title, 'Useful page');
     expect(restored.url, 'https://example.com/page');
     expect(await store.load('npub-someone-else'), isEmpty);
@@ -109,7 +152,8 @@ void main() {
     expect(original.renamed('   ').title, original.title);
 
     await store.save('npub-example-user', [renamed]);
-    final restored = (await BrowserBookmarkStore().load('npub-example-user')).single;
+    final restored =
+        (await BrowserBookmarkStore().load('npub-example-user')).single;
     expect(restored.title, 'Better title');
     expect(restored.url, original.url);
   });

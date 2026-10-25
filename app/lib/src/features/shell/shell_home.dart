@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import '../../core/app_config.dart';
 import '../../core/fips_runtime_service.dart';
-import '../../core/flight_deck_update_manager.dart';
 import '../../core/native_core_bridge.dart';
 import '../../core/signer_vault.dart';
 import '../browser/browser_screen.dart';
@@ -27,8 +26,6 @@ class ShellHome extends StatefulWidget {
     this.relayDiagnosticsSaved = false,
     this.relayDiagnosticsAtLaunch = false,
     this.onRelayDiagnosticsChanged,
-    this.localFlightDeckUrl = '',
-    this.flightDeckUpdates,
     this.profileRelayClient,
     this.fipsRuntime,
     required this.bridge,
@@ -44,8 +41,6 @@ class ShellHome extends StatefulWidget {
   final bool relayDiagnosticsSaved;
   final bool relayDiagnosticsAtLaunch;
   final Future<void> Function(bool)? onRelayDiagnosticsChanged;
-  final String localFlightDeckUrl;
-  final FlightDeckUpdateController? flightDeckUpdates;
   final NostrProfileRelayClient? profileRelayClient;
   final FipsRuntimeService? fipsRuntime;
   final NativeCoreBridge bridge;
@@ -87,28 +82,16 @@ class _ShellHomeState extends State<ShellHome> {
     relay: WebSocketNStackRecoveryRelay(),
   );
   bool _fipsDiagnosticsExportBusy = false;
-  String? _observedFlightDeckVersion;
   String? _lastFipsFailure;
 
   @override
   void initState() {
     super.initState();
-    _attachFlightDeckUpdateListener();
     _macOSMenuBridge.listen(_openDrawer);
   }
 
   @override
-  void didUpdateWidget(covariant ShellHome oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.flightDeckUpdates != widget.flightDeckUpdates) {
-      oldWidget.flightDeckUpdates?.removeListener(_onFlightDeckUpdateChanged);
-      _attachFlightDeckUpdateListener();
-    }
-  }
-
-  @override
   void dispose() {
-    widget.flightDeckUpdates?.removeListener(_onFlightDeckUpdateChanged);
     _macOSMenuBridge.dispose();
     _browserFocusMode.dispose();
     _bookmarkMenuState.dispose();
@@ -160,8 +143,6 @@ class _ShellHomeState extends State<ShellHome> {
             child: StatusScreen(
               config: widget.config,
               bridge: widget.bridge,
-              flightDeckUpdates: widget.flightDeckUpdates,
-              onFlightDeckChanged: _reloadFlightDeck,
             ),
           ),
           _surfaceScaffold(
@@ -171,7 +152,6 @@ class _ShellHomeState extends State<ShellHome> {
               relayDiagnosticsSaved: widget.relayDiagnosticsSaved,
               relayDiagnosticsAtLaunch: widget.relayDiagnosticsAtLaunch,
               onRelayDiagnosticsChanged: widget.onRelayDiagnosticsChanged,
-              localFlightDeckUrl: widget.localFlightDeckUrl,
               fipsRuntime: _fipsRuntime,
               onConfigChanged: widget.onConfigChanged,
               onClearBrowserData: _clearBrowserData,
@@ -318,7 +298,6 @@ class _ShellHomeState extends State<ShellHome> {
     return BrowserScreen(
       key: _browserKey,
       config: widget.config,
-      localFlightDeckUrl: widget.localFlightDeckUrl,
       bridge: widget.bridge,
       signerStore: widget.signerStore,
       onOpenDrawer: _openDrawer,
@@ -462,30 +441,6 @@ class _ShellHomeState extends State<ShellHome> {
 
   Future<void> _clearBrowserData() async {
     await _browserKey.currentState?.clearBrowserData();
-  }
-
-  void _attachFlightDeckUpdateListener() {
-    final updates = widget.flightDeckUpdates;
-    _observedFlightDeckVersion = updates?.snapshot.activeVersion;
-    updates?.addListener(_onFlightDeckUpdateChanged);
-  }
-
-  void _onFlightDeckUpdateChanged() {
-    final updates = widget.flightDeckUpdates;
-    if (updates == null) return;
-    final activeVersion = updates.snapshot.activeVersion;
-    if (activeVersion.isEmpty || activeVersion == _observedFlightDeckVersion) {
-      return;
-    }
-    _observedFlightDeckVersion = activeVersion;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _reloadFlightDeck();
-    });
-  }
-
-  void _reloadFlightDeck() {
-    _browserKey.currentState?.reloadFlightDeck();
   }
 
   void _openFipsApp(String url) {

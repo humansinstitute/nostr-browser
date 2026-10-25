@@ -3,8 +3,8 @@ release_source: ./app/build/app/outputs/flutter-apk/app-release.apk
 name: Nostr Browser
 summary: Daily preview of Nostr Browser.
 description: >-
-  Nostr Browser is the daily Android preview of Nostr Browser, including
-  the latest validated and committed Flight Deck. It installs alongside WMAPP.
+  Nostr Browser is the daily Android preview for websites, external WApps,
+  Drive and Nostr signing. It installs alongside WMAPP.
 tags: [nostr, productivity, tools]
 supported_nips: ["07", "98"]
 release_notes: ./docs/deploy/nightly-zapstore-notes.md

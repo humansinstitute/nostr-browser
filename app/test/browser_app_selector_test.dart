@@ -24,28 +24,25 @@ void main() {
     final image =
         'data:image/png;base64,${base64Encode(data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes))}';
     expect(safeBookmarkImage(image), isNotNull);
-    final html = browserAppSelectorHtml(
-        builtInUrl: 'http://127.0.0.1:47831/',
-        backgroundImage: image,
-        savedBookmarks: [
-          const BrowserBookmark(
-              title: 'Flight Deck', url: 'http://127.0.0.1:47831/'),
-          const BrowserBookmark(
-              title: 'Autopilot', url: 'https://autopilot.example/home'),
-          const BrowserBookmark(
-              title: 'Solvitur Ambulando',
-              url:
-                  'https://apps.example/deck?workspace=deliberately-long-route&scope=keep-this#today'),
-          const BrowserBookmark(
-              title: 'Research', url: 'https://research.example/'),
-          BrowserBookmark(
-              title: 'Custom thumbnail',
-              url: 'https://custom.example/',
-              customImage: image),
-          const BrowserBookmark(
-              title: 'A readable longer app name',
-              url: 'https://long-name.example/'),
-        ]);
+    final html =
+        browserAppSelectorHtml(backgroundImage: image, savedBookmarks: [
+      const BrowserBookmark(title: 'Flight Deck', url: 'https://deck.example/'),
+      const BrowserBookmark(
+          title: 'Autopilot', url: 'https://autopilot.example/home'),
+      const BrowserBookmark(
+          title: 'Solvitur Ambulando',
+          url:
+              'https://apps.example/deck?workspace=deliberately-long-route&scope=keep-this#today'),
+      const BrowserBookmark(
+          title: 'Research', url: 'https://research.example/'),
+      BrowserBookmark(
+          title: 'Custom thumbnail',
+          url: 'https://custom.example/',
+          customImage: image),
+      const BrowserBookmark(
+          title: 'A readable longer app name',
+          url: 'https://long-name.example/'),
+    ]);
     final directory = Platform.environment['APP_SELECTOR_EVIDENCE_DIRECTORY'];
     if (directory != null) {
       final dir = Directory(directory)..createSync(recursive: true);
@@ -54,6 +51,6 @@ void main() {
           .writeAsStringSync(bookmarkDiscoveryScript);
     }
     expect(html, contains('background-image:'));
-    expect(html, isNot(contains('aria-label="Remove Flight Deck"')));
+    expect(html, contains('aria-label="Remove Flight Deck"'));
   });
 }

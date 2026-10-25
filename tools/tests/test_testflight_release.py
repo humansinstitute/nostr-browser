@@ -484,7 +484,7 @@ class ReleaseTests(unittest.TestCase):
             helper.write_bytes((r.ROOT / helper.name).read_bytes())
             (root / 'tools/ios').mkdir(parents=True)
             (root / 'app').mkdir()
-            for file in ('tools/ios/build_core.sh', 'tools/update_flightdeck_bundle.sh'):
+            for file in ('tools/ios/build_core.sh',):
                 path = root / file
                 path.write_text('#!/bin/bash\nexit 0\n')
                 path.chmod(0o700)

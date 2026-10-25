@@ -97,7 +97,11 @@ class RecoveryTests(unittest.TestCase):
 
     def test_claim_recovery_preserves_failed_history_and_refuses_active_or_wrong_owner(self):
         day = dt.datetime.now(nightly.ZoneInfo('Australia/Perth')).date().isoformat()
-        d = self.run / 'claim'; nightly.transition(d, 'claim', 'prior', day, source=self.source)
+        # Preserve a historical claim from before browser-only source claims.
+        d = self.run / 'claim'; d.mkdir()
+        (d / 'ledger.json').write_text(json.dumps({'schema': 2, 'days': {day: {'attempts': [
+            {'owner': 'prior', 'status': 'active', 'source': self.source}
+        ]}}}))
         with self.assertRaises(ValueError): nightly.recover_claim(d, 'new', 'prior', 'run', 'a'*64)
         nightly.transition(d, 'finish', 'prior', day, 'failed')
         before = json.loads((d / 'ledger.json').read_text())['days'][day]['attempts'][0]

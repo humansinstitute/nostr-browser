@@ -10,19 +10,17 @@ String _escape(String value) => value
 
 String browserAppSelectorHtml(
     {required List<BrowserBookmark> savedBookmarks,
-    String? builtInUrl,
     String? backgroundImage,
     String labelColour = '#ffffff'}) {
   final cards = savedBookmarks.map((app) {
-    final builtIn = app.url == builtInUrl;
     final thumbnail = app.thumbnail;
     return '''<article class="app">
       <button class="app-open" data-url="${_escape(app.url)}" aria-label="Open ${_escape(app.title)}">
-        <span class="icon" aria-hidden="true"><span class="fallback">${builtIn ? '✦' : _escape(app.title.isEmpty ? '?' : String.fromCharCode(app.title.runes.first).toUpperCase())}</span>${thumbnail == null || builtIn ? '' : '<img src="${_escape(thumbnail)}" alt="" referrerpolicy="no-referrer">'}</span>
+        <span class="icon" aria-hidden="true"><span class="fallback">${_escape(app.title.isEmpty ? '?' : String.fromCharCode(app.title.runes.first).toUpperCase())}</span>${thumbnail == null ? '' : '<img src="${_escape(thumbnail)}" alt="" referrerpolicy="no-referrer">'}</span>
         <span class="name">${_escape(app.title)}</span>
       </button>
       <button class="star edit-control" data-url="${_escape(app.url)}" aria-label="Open ${_escape(app.title)} on startup" aria-pressed="${app.startup}" title="Open on startup">${app.startup ? '★' : '☆'}</button>
-      ${builtIn ? '' : '<button class="remove edit-control" data-url="${_escape(app.url)}" aria-label="Remove ${_escape(app.title)}" title="Remove app">×</button><button class="edit edit-control" data-url="${_escape(app.url)}" aria-label="Edit ${_escape(app.title)}">Edit</button>'}
+      ${'<button class="remove edit-control" data-url="${_escape(app.url)}" aria-label="Remove ${_escape(app.title)}" title="Remove app">×</button><button class="edit edit-control" data-url="${_escape(app.url)}" aria-label="Edit ${_escape(app.title)}">Edit</button>'}
     </article>''';
   }).join('\n');
   final background = safeBookmarkImage(backgroundImage);

@@ -68,7 +68,7 @@ establish TestFlight/App Store distribution access. Verify that both signed
 targets and provisioning profiles permit `packet-tunnel-provider` and include
 the paired iPhone. Install the signed release in place and launch without a
 debugger, then run the physical consent, tunnel and WApp checks below. Keep
-machine-specific install evidence and Flight Deck bundle provenance in ignored
+machine-specific install evidence and browser source provenance in ignored
 local `tmp/docs/handoffs/` records.
 
 ## Routing, identity and lifecycle
@@ -125,7 +125,7 @@ only for the `fips` domain and subdomains because `NSAllowsLocalNetworking`
 does not cover this custom TLD. It permits HTTP carried over the authenticated,
 encrypted FIPS mesh; it does not disable ATS globally or trust a signer origin.
 Existing exact-origin `window.nostr` approval remains mandatory. There is no
-wildcard signing approval. Embedded Flight Deck retains its existing origin,
+wildcard signing approval. External WApps retain their exact verified origins,
 secure context, Dexie cache and TowerSyncService ownership. This runtime does
 does not establish live consumer acceptance for the universal browser FIPS
 transport on iPhone; that requires a separately evidenced iOS WebView pass.
@@ -180,7 +180,7 @@ or sanitized diagnostic evidence and pass/fail for each item:
    bootstrap readiness. Refuse consent in a separate attempt and verify retry.
 2. Open an existing exact `.fips` WApp URL, resolve/load it, and complete its
    Nostr login with the expected exact-origin prompt. Verify a second origin
-   needs its own approval. Do not change the embedded Flight Deck origin.
+   needs its own approval. Do not change an approved application origin.
 3. Load ordinary HTTPS and resolve ordinary public DNS while FIPS is active.
 4. Stop, restart and repair repeatedly; verify the same node identity and no
    stale connected state after killing/relaunching Runner or an extension exit.
@@ -201,15 +201,11 @@ Apple references checked for this implementation:
 [split DNS](https://developer.apple.com/documentation/networkextension/nednssettings/matchdomains),
 [local ATS scope](https://developer.apple.com/documentation/bundleresources/information-property-list/nsapptransportsecurity/nsallowslocalnetworking).
 
-### Simulator port collision
+### Simulator startup
 
-The iOS Simulator shares the Mac's network ports. If desktop WMAPP already
-owns the fixed bundled Flight Deck origin `127.0.0.1:47831`, simulator Runner
-can install/launch but fail to render with `Address already in use`. Coordinate
-closing that desktop WMAPP only when its owner is ready, then relaunch the
-simulator. Do not pick a random port, change the Flight Deck browser origin,
-or silently reuse another instance's server as a workaround. The 2026-09-09
-simulator test encountered this collision; its screenshot is not a visual pass.
+Browser startup no longer binds a local application HTTP port. A desktop
+browser and iOS Simulator can start independently without the old bundled
+application port collision. Device installation still needs explicit authority.
 
 ### Event-driven refinement evidence
 
@@ -314,7 +310,7 @@ For a physical-device A/B investigation:
    peer connectivity and packet delivery, then repeat on cellular and across
    Wi-Fi/cellular/offline transitions. Confirm ordinary HTTPS/DNS, stop/restart,
    identity continuity and exact-origin approvals. Include an empty browser tab
-   versus embedded Flight Deck comparison if Runner/WebKit remains active.
+   versus external WApp comparison if Runner/WebKit remains active.
 5. If activity persists with the VPN confirmed stopped, investigate Runner/WebKit
    and the browser consumer rather than altering tunnel timers. If extension
    activity dominates, use its traces to separate discovery/retry, heartbeat,

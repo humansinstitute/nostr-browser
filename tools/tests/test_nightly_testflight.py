@@ -13,8 +13,8 @@ SPEC.loader.exec_module(n)
 
 
 class NightlyTests(unittest.TestCase):
-    old = {'nbrowser': 'a' * 40, 'flightdeck': 'b' * 40}
-    new = {'nbrowser': 'c' * 40, 'flightdeck': 'd' * 40}
+    old = {'nbrowser': 'a' * 40}
+    new = {'nbrowser': 'c' * 40}
 
     def test_delivered_readback_continuation_preserves_finished_claim(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -96,8 +96,8 @@ class NightlyTests(unittest.TestCase):
             self.assertEqual(got['source'], self.new)
 
     def test_source_identity_names_canonical_repo(self):
-        with patch.object(n, 'git', side_effect=['main', '', 'a' * 40, 'main', '', 'b' * 40]):
-            self.assertEqual(n.source_identity('/flightdeck'), self.old)
+        with patch.object(n, 'git', side_effect=['main', '', 'a' * 40]):
+            self.assertEqual(n.source_identity(), self.old)
 
     def test_no_owner_or_fabricated_outcome(self):
         with tempfile.TemporaryDirectory() as temp:

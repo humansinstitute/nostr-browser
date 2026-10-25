@@ -1,3 +1,5 @@
+import 'retired_bundled_app.dart';
+
 class AppConfig {
   const AppConfig({
     required this.towerUrl,
@@ -101,7 +103,8 @@ class AppConfig {
       for (final origin in trustedOrigins) origin.trim(),
       _originOf(towerUrl),
       _originOf(flightDeckUrl),
-    }..remove('');
+    }..removeWhere(
+        (origin) => origin.isEmpty || isRetiredBundledAppUrl(origin));
     return origins.toList(growable: false);
   }
 

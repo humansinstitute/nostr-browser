@@ -76,7 +76,6 @@ void main() {
           home: Scaffold(
               body: BrowserScreen(
                   config: currentConfig,
-                  localFlightDeckUrl: page,
                   bridge: signer,
                   signerStore: store,
                   onOpenDrawer: () {},

@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'theme/browser_theme.dart';
 import 'core/app_config.dart';
-import 'core/flight_deck_update_manager.dart';
+import 'core/retired_bundled_app.dart';
 import 'core/native_core_bridge.dart';
 import 'core/signer_vault.dart';
 import 'features/browser/nostr_profile_relay_client.dart';
@@ -21,16 +21,12 @@ class WingmanApp extends StatefulWidget {
   const WingmanApp({
     this.useSignerVault = true,
     this.signerVault,
-    this.localFlightDeckUrl = '',
-    this.flightDeckUpdates,
     this.profileRelayClient,
     super.key,
   });
 
   final bool useSignerVault;
   final SignerVault? signerVault;
-  final String localFlightDeckUrl;
-  final FlightDeckUpdateController? flightDeckUpdates;
   final NostrProfileRelayClient? profileRelayClient;
 
   @override
@@ -101,8 +97,11 @@ class _WingmanAppState extends State<WingmanApp> {
       return defaults.copyWith(
         towerUrl: _stringValue(decoded, 'tower_url') ?? defaults.towerUrl,
         appNpub: _stringValue(decoded, 'app_npub') ?? defaults.appNpub,
-        flightDeckUrl:
-            _stringValue(decoded, 'flight_deck_url') ?? defaults.flightDeckUrl,
+        flightDeckUrl: isRetiredBundledAppUrl(
+                _stringValue(decoded, 'flight_deck_url') ?? '')
+            ? ''
+            : _stringValue(decoded, 'flight_deck_url') ??
+                defaults.flightDeckUrl,
         workspaceId:
             _stringValue(decoded, 'workspace_id') ?? defaults.workspaceId,
         workspaceServiceNpub: _stringValue(decoded, 'workspace_service_npub') ??
@@ -199,8 +198,6 @@ class _WingmanAppState extends State<WingmanApp> {
       relayDiagnosticsSaved: _savedRelayDiagnostics,
       relayDiagnosticsAtLaunch: _launchRelayDiagnostics,
       onRelayDiagnosticsChanged: _setRelayDiagnostics,
-      localFlightDeckUrl: widget.localFlightDeckUrl,
-      flightDeckUpdates: widget.flightDeckUpdates,
       profileRelayClient: widget.profileRelayClient,
       bridge: _bridge,
       signerStore: _signerStore,

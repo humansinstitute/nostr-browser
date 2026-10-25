@@ -2,7 +2,6 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-"$ROOT/tools/update_flightdeck_bundle.sh"
 
 cd "${ROOT}/app"
 flutter pub get

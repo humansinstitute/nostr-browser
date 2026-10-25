@@ -71,33 +71,24 @@ file list, elapsed time, or a newer build alone establishes neither.
    local commits and edits. Use an isolated checkout for packaging when needed;
    stop only for unresolved incompatible changes or moving selected inputs. Preserve unrelated and concurrent files. Never stash, reset,
    rebase, force-push or bypass hooks.
-3. Flight Deck comes first. Review all compatible nonignored software and
-   reusable documentation, run focused tests and required public-source,
-   unit, release-note, build and distribution checks. Follow its release-note
-   numbering rules for source changes. Build in an isolated snapshot with
-   pinned build number/ID/time so generated metadata cannot dirty shared
-   source. Verify the exact tested staged tree remains unchanged, then commit
-   a Conventional Commit checkpoint. A clean tree retains its existing commit.
-   Push the configured authoritative upstream only as a normal fast-forward
-   when safely permitted; resolve compatible divergence before building. Retain local history and instructions;
-   portable documentation edits and noisy performance thresholds alone must not
-   suppress a correctly validated signed release. Report benchmark observations
-   separately; actual functional regressions remain release blockers.
+3. Review and commit tested nonignored NBrowser software and reusable docs.
+   Run Flutter analysis/tests and browser-only package regression checks. No
+   Flight Deck checkout, build or test is required. Preserve concurrent work.
 4. Validate NBrowser analysis/tests sequentially and release tooling tests. Review
    and commit all compatible tested nonignored source/docs on `main`, checking
    for concurrent edits before committing. Ignore operational evidence and
    generated bundles. Never stage everything without inspecting the candidates.
-5. After both validated source checkpoints are committed and stable, run
+5. After the validated browser source checkpoint is committed and stable, run
    `"$RELEASE_VENV/bin/python" tools/ios/nightly_testflight.py claim`. The helper
-   pins the exact clean NBrowser and Flight Deck commits. Save the returned
-   Perth day and source pair. An active claim fails closed globally. A finished
-   same-day attempt blocks the same source pair, but a later attempt may claim
+   pins the exact clean NBrowser commit. Save the returned
+   Perth day and browser source. An active claim fails closed globally. A finished
+   same-day attempt blocks the same browser source, but a later attempt may claim
    genuinely newer committed source. Legacy same-day claims without pinned
    source use the supported evidence-backed retry route. A crash never expires a claim;
    uncertain delivery retains it.
 6. Check authentication and release gates before expensive packaging. Run
    `nightly_testflight.py dry-run` with the private virtual environment. On
-   failure report the exact prerequisite and both source commits, finish as
+   failure report the exact prerequisite and the browser source commit, finish as
    `blocked_auth` only for missing/failed auth, otherwise `failed`, and stop.
    Do not ask for a provisioned key again or manufacture readiness.
 7. Run `testflight_release.py api-preflight --run <unique-name>`, then
@@ -108,19 +99,13 @@ file list, elapsed time, or a newer build alone establishes neither.
    current Perth daily claim. All API actions reject `--dry-run`; `api-preflight`
    is read-only.
    Never reuse uncertain numbers or re-upload a pending delivery.
-8. Create isolated snapshots of the exact committed Flight Deck and NBrowser trees
-   under ignored private evidence. Use `git archive` or a private local clone;
-   never build the shared working copy. Install frozen Flight Deck dependencies,
-   set `FLIGHT_DECK_PG_APP_NPUB` to the verified Flight Deck app identity from
-   the scoped Flight Deck context (local overrides do not set it automatically),
-   pin `FLIGHTDECK_BUILD_NUMBER`, `FLIGHTDECK_BUILD_ID`, `SOURCE_DATE_EPOCH`,
-   build and verify `dist`, then pass that snapshot through `FLIGHT_DECK_DIR`
-   to the existing NBrowser release workflow. Record commit, version/build and
-   asset hashes. The archive and IPA must embed the canonical NBrowser Git
-   repository and exact source commit in both signed targets. Keep generated
-   output in the snapshot, not shared tracked files.
+8. The build helper snapshots the exact claimed NBrowser commit under the short
+   source lock into ignored evidence before packaging. It builds the pinned
+   native FIPS core and Flutter browser. No external frontend is fetched. The
+   archive and IPA embed canonical repository and source commit in both signed
+   targets. Keep generated output in the snapshot, not shared tracked files.
 9. Run `testflight_release.py api-build --run <unique-name>` to perform the
-   isolated FD-first build and export; then `api-upload` once. Use its barriers
+   isolated browser build and export; then `api-upload` once. Use its barriers
    and signing checks for Runner and Packet Tunnel. Validate the exact exported artifact, archive, profiles, entitlements,
    identifiers, team and matching monotonic build. No upload until every gate
    passes. One upload attempt only; uncertainty requires readback, never retry.
@@ -245,7 +230,7 @@ resume only the already uploaded run:
 ```
 
 This appends a claim while preserving the previous result. It requires the exact
-delivered source pair, completed upload command, a finished prior claim and no
+delivered browser source, completed upload command, a finished prior claim and no
 active release. A later worker/day supplies `--previous-owner <finished-owner>`. Its authority permits only this run's readback and private
 group assignment; reservation, build, upload and other runs remain forbidden.
 Finish the continued claim with the observed outcome. A different worker/day

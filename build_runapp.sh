@@ -22,8 +22,6 @@ command -v flutter >/dev/null 2>&1 || {
 echo "Updating repo..."
 git -C "$REPO_DIR" pull --ff-only
 
-"$REPO_DIR/tools/update_flightdeck_bundle.sh"
-
 if [[ "${WMAPP_SKIP_CLEAN:-0}" != "1" ]]; then
   echo "Cleaning Flutter build cache..."
   (

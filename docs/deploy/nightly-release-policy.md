@@ -3,7 +3,7 @@
 Two existing scheduler sessions run at 22:00 Australia/Perth. Each owns one
 store outcome. TestFlight processing, compliance, claims and failures never gate
 Android; Android state never gates TestFlight. Both use canonical Nostr Browser
-and the configured current Flight Deck checkout. Do not run a second upload to
+only; no separate frontend checkout is required. Do not run a second upload to
 test scheduling.
 
 ## Source preparation and validation
@@ -30,20 +30,17 @@ the kernel releases it on process exit/crash. Do not delete its persistent file.
 This replaces the old whole-release directory lock. Preserve any old lock
 record as evidence rather than stealing another session's lock.
 
-Commit all compatible tested nonignored software and reusable docs, Flight Deck
-first. Keep operational evidence ignored. Required checks include focused
-regressions, static analysis/compilation, Flutter tests and Flight Deck
-`check:public-source`, `test:release`, build and `verify:dist`. The release test
-mode still asserts actual worker results and event-loop progress; its 50 ms
-host scheduling observation is recorded without becoming an upload gate.
-Strict `test` remains available for performance investigation. No functional
-failure may be relabelled as noise or reported as passing.
+Commit all compatible tested nonignored browser software and reusable docs.
+Keep operational evidence ignored. Run focused regressions, static analysis,
+Flutter tests and the browser-only package check. No functional failure may be
+relabeled as noise or reported as passing. No Flight Deck build/test is a gate.
 
-Helpers archive exact selected commits under the short source lock before
-expensive packaging. Subsequent shared HEAD/edits cannot change those snapshots.
-Both snapshots have a real Git source index for public-source checks. Signed
-artifacts, source identity, bundle assets, package/certificate, private audience,
-monotonic numbers and uncertain-delivery gates remain mandatory.
+Helpers archive the exact selected browser commit under the short source lock
+before expensive packaging. Subsequent shared HEAD/edits cannot change that
+snapshot. Signed artifacts, source identity, absence of embedded application
+assets, package/certificate, private audience, monotonic numbers and uncertain
+delivery gates remain mandatory. Old retained release records remain historical
+evidence; never rewrite them to look like new browser-only builds.
 
 ## Recovery and availability
 

@@ -114,40 +114,24 @@ def execute(r, a, run):
         return
     if a.action == 'api-build':
         r.require(s['stage'] == 'initialized', 'Build already attempted; preserve evidence.')
-        r.require(os.environ.get('FLIGHT_DECK_PG_APP_NPUB'), 'Verified FLIGHT_DECK_PG_APP_NPUB required.')
         from nightly_testflight import _valid_source
-        r.require(_valid_source(s.get('source')) and s['source'] == require_daily_claim(run, a.action)['source'],
-                  'Build must use the exact source pair authorized by its daily claim.')
+        r.require(_valid_source(s.get('source'), browser_only=True) and s['source'] == require_daily_claim(run, a.action)['source'],
+                  'Build must use the exact browser source authorized by its daily claim.')
         h = client.preflight()
         reservation_gate(r, h, s)
         delivery_barrier(r, run, client)
-        s['stage'] = 'building'; r.write(state, s)
-        # Flight Deck is built first from the exact committed snapshot.
-        fd = run / 'flightdeck'; wm = run / 'wmapp'
+        s['stage'] = 'building'; s['browser_only'] = True; r.write(state, s)
+        wm = run / 'wmapp'
         import sys
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from release_sources import source_lock
         with source_lock(r.ROOT):
-            s['flightdeck_commit'] = snapshot(r, a.flightdeck, fd, s['source']['flightdeck'])
             s['source_commit'] = snapshot(r, r.ROOT, wm, s['source']['nbrowser'])
-        meta = json.loads((fd / '.build-meta.json').read_text())
-        notes = json.loads((fd / 'release-notes.json').read_text())
-        number = max([meta['absoluteVersion']] + [x['buildNumber'] for x in notes['releases']])
         env = os.environ.copy()
-        env.update(FLIGHTDECK_BUILD_NUMBER=str(number), FLIGHTDECK_BUILD_ID='wmapp-' + s['flightdeck_commit'][:12] + '-' + str(number),
-                   SOURCE_DATE_EPOCH=r.command(['git', '-C', a.flightdeck, 'log', '-1', '--format=%ct', s['source']['flightdeck']]).decode().strip(), FLIGHT_DECK_DIR=str(fd))
         def logged(args, cwd, label):
             with r.private_log(run / (label + '.log')) as stream:
                 p = subprocess.run([str(x) for x in args], cwd=cwd, env=env, stdout=stream, stderr=subprocess.STDOUT)
             r.require(p.returncode == 0, label + ' failed; inspect private log. No automatic retry.')
-        logged(['bun', 'install', '--frozen-lockfile'], fd, 'fd-install')
-        logged(['bun', 'run', 'check:public-source'], fd, 'fd-public-source')
-        logged(['bun', 'run', 'test:release'], fd, 'fd-tests')
-        logged(['bun', 'run', 'build'], fd, 'fd-build')
-        logged(['bun', 'run', 'verify:dist'], fd, 'fd-verify')
-        s['flightdeck_version'] = json.loads((fd / 'dist/version.json').read_text())
-        r.require(s['flightdeck_version']['buildId'] == env['FLIGHTDECK_BUILD_ID'], 'Flight Deck build ID mismatch.')
-        s['flightdeck_assets'] = r.tree_hash(fd / 'dist')
         s['source_repository'] = r.command(
             ['git', '-C', r.ROOT, 'remote', 'get-url', 'origin']).decode().strip()
         r.require(s['source_repository'] == r.SOURCE_REPOSITORY,
@@ -157,8 +141,6 @@ def execute(r, a, run):
         s['export_policy_sha256'] = r.digest(r.options())
         r.write(state, s)
         logged([wm / 'tools/ios/build_core.sh'], wm, 'core')
-        logged([wm / 'tools/update_flightdeck_bundle.sh', '--use-existing-dist'], wm, 'bundle')
-        r.require(r.tree_hash(wm / 'app/assets/flightdeck') == s['flightdeck_assets'], 'Bundled Flight Deck differs from verified dist.')
         logged(['flutter', 'build', 'ios', '--release', '--no-codesign', '--build-name=' + s['version'], '--build-number=' + str(s['build'])], wm / 'app', 'flutter')
         logged(['xcodebuild', '-workspace', wm / 'app/ios/Runner.xcworkspace', '-scheme', 'Runner', '-configuration', 'Release',
                 '-destination', 'generic/platform=iOS', '-archivePath', run / 'Runner.xcarchive',

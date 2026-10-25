@@ -10,11 +10,9 @@ class BookmarkEditor extends StatefulWidget {
       {super.key,
       required this.bookmark,
       required this.bookmarks,
-      this.reservedUrl,
       this.pickImage});
   final BrowserBookmark bookmark;
   final List<BrowserBookmark> bookmarks;
-  final String? reservedUrl;
   final Future<String?> Function()? pickImage;
 
   @override
@@ -112,8 +110,7 @@ class _BookmarkEditorState extends State<BookmarkEditor> {
                   ? null
                   : () {
                       final error = bookmarkEditError(widget.bookmarks,
-                          widget.bookmark, _title.text, _url.text,
-                          reservedUrl: widget.reservedUrl);
+                          widget.bookmark, _title.text, _url.text);
                       if (error != null) {
                         setState(() => _error = error);
                         return;

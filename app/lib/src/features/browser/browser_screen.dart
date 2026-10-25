@@ -61,7 +61,6 @@ class BrowserScreen extends StatefulWidget {
     required this.onOpenSetup,
     required this.onOpenSigner,
     required this.onOpenStatus,
-    this.localFlightDeckUrl = '',
     this.onBookmarkMenuStateChanged,
     this.onFocusModeChanged,
     this.onPrepareFipsNavigation,
@@ -83,7 +82,6 @@ class BrowserScreen extends StatefulWidget {
   final VoidCallback onOpenSetup;
   final VoidCallback onOpenSigner;
   final VoidCallback onOpenStatus;
-  final String localFlightDeckUrl;
   final ValueChanged<BrowserBookmarkMenuState>? onBookmarkMenuStateChanged;
   final ValueChanged<bool>? onFocusModeChanged;
   final Future<String?> Function(String url)? onPrepareFipsNavigation;
@@ -122,7 +120,6 @@ class BrowserScreenState extends State<BrowserScreen>
   static const _tabClickAddressReveal = Duration(seconds: 3);
   static const _mobileChromeBreakpoint = 600.0;
   static const _homeTitle = 'New Tab';
-  static const _flightDeckTitle = 'Flight Deck';
   static const _browserSignerKey = 'wingman.browser.last_signer_npub.v1';
   static const _browserTabsKeyPrefix = 'wingman.browser.tabs.v3.';
   final WebViewCookieManager _cookieManager = WebViewCookieManager();
@@ -146,7 +143,6 @@ class BrowserScreenState extends State<BrowserScreen>
   String? _defaultSelectorBackground;
   bool _bookmarkEditorOpen = false;
   String _labelColour = '#ffffff';
-  bool _builtInStartup = false;
   int _signerSyncEpoch = 0;
   Future<void> _launcherSettingsQueue = Future<void>.value();
   final Map<String, _BrowserTabsSnapshot> _sessionTabs = {};
@@ -208,7 +204,6 @@ class BrowserScreenState extends State<BrowserScreen>
       _bookmarks = const [];
       _selectorBackground = null;
       _labelColour = '#ffffff';
-      _builtInStartup = false;
       _profileEpoch++;
       _profile = const NostrProfile();
       unawaited(_loadProfile().then((_) {
@@ -736,42 +731,14 @@ class BrowserScreenState extends State<BrowserScreen>
     if (url == null) return const BrowserBookmarkMenuState.unavailable();
     return BrowserBookmarkMenuState(
       available: true,
-      bookmarked: _isLocalFlightDeckUrl(url) ||
-          _bookmarks.any((bookmark) => bookmark.url == url),
+      bookmarked: _bookmarks.any((bookmark) => bookmark.url == url),
     );
   }
 
-  bool get _hasLocalFlightDeck =>
-      canonicalBrowserBookmarkUrl(widget.localFlightDeckUrl) != null;
-
-  BrowserBookmark? get _localFlightDeckBookmark {
-    final url = canonicalBrowserBookmarkUrl(widget.localFlightDeckUrl);
-    if (url == null) return null;
-    return BrowserBookmark(
-        title: _flightDeckTitle, url: url, startup: _builtInStartup);
-  }
-
-  List<BrowserBookmark> get _visibleBookmarks {
-    final flightDeck = _localFlightDeckBookmark;
-    if (flightDeck == null) return _bookmarks;
-    return [
-      flightDeck,
-      for (final bookmark in _bookmarks)
-        if (!_isLocalFlightDeckUrl(bookmark.url)) bookmark,
-    ];
-  }
-
-  bool _isLocalFlightDeckUrl(String? value) {
-    final localOrigin = SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl);
-    return localOrigin.isNotEmpty &&
-        SignerPolicy.normalizeOrigin(value ?? '') == localOrigin;
-  }
+  List<BrowserBookmark> get _visibleBookmarks => _bookmarks;
 
   SignerPolicy get _signerPolicy => SignerPolicy(
-        trustedOrigins: [
-          ...widget.config.effectiveTrustedOrigins(),
-          if (_hasLocalFlightDeck) widget.localFlightDeckUrl,
-        ],
+        trustedOrigins: widget.config.effectiveTrustedOrigins(),
       );
 
   void _notifyBookmarkMenuState() {
@@ -784,7 +751,6 @@ class BrowserScreenState extends State<BrowserScreen>
       tab.isHome ? null : tab.currentUrl ?? tab.addressController.text,
     );
     if (url == null) return;
-    if (_isLocalFlightDeckUrl(url)) return;
     final existing = _bookmarks.indexWhere((bookmark) => bookmark.url == url);
     if (existing >= 0) {
       _bookmarks = List<BrowserBookmark>.from(_bookmarks)..removeAt(existing);
@@ -805,7 +771,6 @@ class BrowserScreenState extends State<BrowserScreen>
 
   Future<void> _removeBookmark(String url) async {
     final canonicalUrl = canonicalBrowserBookmarkUrl(url);
-    if (_isLocalFlightDeckUrl(canonicalUrl)) return;
     if (canonicalUrl == null ||
         !_bookmarks.any((bookmark) => bookmark.url == canonicalUrl)) {
       return;
@@ -821,7 +786,7 @@ class BrowserScreenState extends State<BrowserScreen>
   }
 
   Future<void> _editBookmark(BrowserTab tab, String url) async {
-    if (!tab.isHome || _isLocalFlightDeckUrl(url) || _bookmarkEditorOpen) {
+    if (!tab.isHome || _bookmarkEditorOpen) {
       return;
     }
     final index = _bookmarks.indexWhere((b) => b.url == url);
@@ -835,9 +800,7 @@ class BrowserScreenState extends State<BrowserScreen>
       edited = await showDialog<BrowserBookmark>(
           context: context,
           builder: (_) => BookmarkEditor(
-              bookmark: original,
-              bookmarks: List.of(_bookmarks),
-              reservedUrl: _localFlightDeckBookmark?.url));
+              bookmark: original, bookmarks: List.of(_bookmarks)));
     } finally {
       _bookmarkEditorOpen = false;
     }
@@ -850,9 +813,8 @@ class BrowserScreenState extends State<BrowserScreen>
       return;
     }
     final current = _bookmarks.indexWhere((b) => identical(b, original));
-    final error = bookmarkEditError(
-        _bookmarks, original, edited.title, edited.url,
-        reservedUrl: _localFlightDeckBookmark?.url);
+    final error =
+        bookmarkEditError(_bookmarks, original, edited.title, edited.url);
     if (current < 0 || error != null) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(
@@ -885,13 +847,11 @@ class BrowserScreenState extends State<BrowserScreen>
     final bookmarks = await _bookmarkStore.load(signerNpub);
     final background = await _bookmarkStore.loadBackground(signerNpub);
     final colour = await _bookmarkStore.loadLabelColour(signerNpub);
-    final builtInStartup = await _bookmarkStore.loadBuiltInStartup(signerNpub);
     await _nstackRegistryStore.migrateLegacyBrowserSettings(
       signerNpub,
       bookmarks: bookmarks,
       background: background,
       labelColour: colour,
-      builtInStartup: builtInStartup,
     );
     final registry = await _nstackRegistryStore.load(signerNpub);
     final stackSettings = registry.activeStack?.settings;
@@ -903,7 +863,6 @@ class BrowserScreenState extends State<BrowserScreen>
     _bookmarks = stackSettings?.bookmarks ?? bookmarks;
     _selectorBackground = stackSettings?.background ?? background;
     _labelColour = stackSettings?.labelColour ?? colour;
-    _builtInStartup = stackSettings?.builtInStartup ?? builtInStartup;
     _reloadHomeTabs();
     _notifyBookmarkMenuState();
   }
@@ -951,14 +910,6 @@ class BrowserScreenState extends State<BrowserScreen>
       _focusMode = false;
     });
     widget.onFocusModeChanged?.call(false);
-  }
-
-  void reloadFlightDeck() {
-    for (final tab in _tabs) {
-      if (_isLocalFlightDeckUrl(tab.currentUrl ?? tab.addressController.text)) {
-        tab.controller.reload();
-      }
-    }
   }
 
   Future<void> _loadProfile() async {
@@ -2115,7 +2066,6 @@ class BrowserScreenState extends State<BrowserScreen>
     if (!currentDocument()) return;
     await _refreshNavigationState(tab);
     if (!currentDocument()) return;
-    await _applyFlightDeckDisplayDefaults(tab, url);
     if (!currentDocument()) return;
     await _injectTabCapture(tab);
     if (!currentDocument()) return;
@@ -2159,7 +2109,6 @@ class BrowserScreenState extends State<BrowserScreen>
   String _resolvedPageTitle(String? title, String url) {
     final normalized = title?.trim() ?? '';
     if (normalized.isNotEmpty) return normalized;
-    if (_isLocalFlightDeckUrl(url)) return _flightDeckTitle;
     return _titleForUrl(url);
   }
 
@@ -2212,30 +2161,6 @@ class BrowserScreenState extends State<BrowserScreen>
 ''';
   }
 
-  Future<void> _applyFlightDeckDisplayDefaults(
-    BrowserTab tab,
-    String url,
-  ) async {
-    final pageOrigin = SignerPolicy.normalizeOrigin(url);
-    final flightDeckOrigin =
-        SignerPolicy.normalizeOrigin(widget.config.flightDeckUrl);
-    final localFlightDeckOrigin =
-        SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl);
-    if (pageOrigin.isEmpty ||
-        (pageOrigin != flightDeckOrigin &&
-            pageOrigin != localFlightDeckOrigin)) {
-      return;
-    }
-    await tab.controller.runJavaScript('''
-(() => {
-  const root = document.documentElement;
-  if (!root) return;
-  root.style.setProperty('-webkit-text-size-adjust', 'none');
-  root.style.setProperty('text-size-adjust', 'none');
-})();
-''');
-  }
-
   Future<void> _loadSelectorBackgroundAsset() async {
     final bytes = await rootBundle.load('assets/app-selector/voxel-beach.png');
     if (!mounted) return;
@@ -2247,7 +2172,6 @@ class BrowserScreenState extends State<BrowserScreen>
   String _homePageHtml({required List<BrowserBookmark> savedBookmarks}) =>
       browserAppSelectorHtml(
           savedBookmarks: savedBookmarks,
-          builtInUrl: _localFlightDeckBookmark?.url,
           backgroundImage: _selectorBackground ?? _defaultSelectorBackground,
           labelColour: _labelColour);
 
@@ -2275,8 +2199,11 @@ class BrowserScreenState extends State<BrowserScreen>
       return;
     }
     final origin = SignerPolicy.normalizeOrigin(url);
-    final local = SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl);
-    if (Uri.tryParse(origin)?.scheme != 'https' && origin != local) {
+    final uri = Uri.tryParse(origin);
+    final approvedLocal = uri?.scheme == 'http' &&
+        const ['localhost', '127.0.0.1', '::1'].contains(uri?.host) &&
+        _signerPolicy.trustedOrigins.contains(origin);
+    if (uri?.scheme != 'https' && !approvedLocal) {
       return;
     }
     late final GraspFipsBrowserBridge bridge;
@@ -2399,7 +2326,7 @@ class BrowserScreenState extends State<BrowserScreen>
   Future<void> _injectIfTrusted(BrowserTab tab) async {
     if (Platform.isAndroid && !await tab.nativeChannelsReady) return;
     if (!mounted || tab.disposed) return;
-    final url = tab.currentUrl ?? widget.config.flightDeckUrl;
+    final url = tab.currentUrl ?? '';
     final origin = SignerPolicy.normalizeOrigin(url);
     final policy = _signerPolicy;
     if (!policy.canInject(url)) {
@@ -2902,7 +2829,7 @@ class BrowserScreenState extends State<BrowserScreen>
       final url = params['url']?.toString() ?? '';
       final normalized = _normalizeOpenTabUrl(
         url,
-        tab.currentUrl ?? widget.config.flightDeckUrl,
+        tab.currentUrl ?? '',
       );
       if (normalized == null) {
         await _resolveSignerRequest(
@@ -2994,31 +2921,20 @@ class BrowserScreenState extends State<BrowserScreen>
                 !_visibleBookmarks.any((b) => b.url == url)) {
               return;
             }
-            if (url == _localFlightDeckBookmark?.url) {
-              final registry = await _nstackRegistryStore.load(identity);
-              if (registry.activeStack != null) {
-                await _nstackRegistryStore.updateActiveSettings(identity,
-                    (settings) => settings.copyWith(builtInStartup: enabled));
-              } else {
-                await _bookmarkStore.saveBuiltInStartup(identity, enabled);
-              }
-              if (current()) _builtInStartup = enabled;
-            } else {
-              final updated = [
-                for (final app in _bookmarks)
-                  if (app.url != url)
-                    app
-                  else
-                    BrowserBookmark(
-                        title: app.title,
-                        url: app.url,
-                        iconUrl: app.iconUrl,
-                        customImage: app.customImage,
-                        startup: enabled)
-              ];
-              await _saveBookmarksForIdentity(identity, updated);
-              if (current()) _bookmarks = updated;
-            }
+            final updated = [
+              for (final app in _bookmarks)
+                if (app.url != url)
+                  app
+                else
+                  BrowserBookmark(
+                      title: app.title,
+                      url: app.url,
+                      iconUrl: app.iconUrl,
+                      customImage: app.customImage,
+                      startup: enabled)
+            ];
+            await _saveBookmarksForIdentity(identity, updated);
+            if (current()) _bookmarks = updated;
           }
           // Update controls without reloading the home document or launching apps.
           if (current()) {
@@ -3167,9 +3083,7 @@ class BrowserScreenState extends State<BrowserScreen>
                         .contains(signingParams['kind']?.toString()))) &&
             _isFipsAppUrl(signingPage ?? '') &&
             pageOriginForAuth !=
-                SignerPolicy.normalizeOrigin(widget.config.flightDeckUrl) &&
-            pageOriginForAuth !=
-                SignerPolicy.normalizeOrigin(widget.localFlightDeckUrl));
+                SignerPolicy.normalizeOrigin(widget.config.flightDeckUrl));
     bool nativeContextValid() =>
         ((meshTarget == null && !graspAuth && !directAuth) || _fipsEnabled) &&
         mounted &&
@@ -3318,7 +3232,7 @@ class BrowserScreenState extends State<BrowserScreen>
       final event = payload['params'] is Map<String, dynamic>
           ? payload['params'] as Map<String, dynamic>
           : <String, dynamic>{};
-      final pageUrl = tab.currentUrl ?? widget.config.flightDeckUrl;
+      final pageUrl = tab.currentUrl ?? '';
       final pageOrigin = SignerPolicy.normalizeOrigin(pageUrl);
       if (!_signerPolicy.canSignNip07(pageUrl)) {
         final reason = 'unsupported NIP-07 page origin: $pageOrigin';
@@ -3461,7 +3375,7 @@ class BrowserScreenState extends State<BrowserScreen>
           SignerPolicy.normalizeOrigin(meshTarget),
       ]);
       final decision = scopedPolicy.validateNip98(
-        pageUrl: tab.currentUrl ?? widget.config.flightDeckUrl,
+        pageUrl: tab.currentUrl ?? '',
         targetUrl: requestUrl,
         method: requestMethod,
         body: requestBody,
@@ -3860,7 +3774,7 @@ class BrowserScreenState extends State<BrowserScreen>
     required String method,
     required Map<String, dynamic> params,
   }) async {
-    final pageUrl = tab.currentUrl ?? widget.config.flightDeckUrl;
+    final pageUrl = tab.currentUrl ?? '';
     final pageOrigin = SignerPolicy.normalizeOrigin(pageUrl);
     if (!_signerPolicy.canSignNip07(pageUrl)) {
       final reason = 'unsupported NIP-44 page origin: $pageOrigin';

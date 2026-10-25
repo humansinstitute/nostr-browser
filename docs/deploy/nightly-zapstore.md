@@ -24,12 +24,12 @@ future APK updates require the same certificate.
    This lane performs Android only; Apple claims, failure or compliance never
    gate it. Use the short process-owned lock only for source preparation and
    immutable snapshots, then release it before packaging/delivery.
-2. Set the verified Flight Deck app and broker publisher public identities from
+2. Set the verified broker publisher public identity from
    scoped context. Run `python3 tools/nightly_zapstore.py dry-run` before `build`.
    It queries complete signed relay history and verifies the original private
    Android certificate. Build reserves above all local/remote numbers and takes
-   exact committed FD/NBrowser snapshots. It runs mandatory functional tests
-   with `test:release`, analysis, build and asset checks. Source preparation
+   an exact committed NBrowser snapshot. It runs Flutter functional tests,
+   analysis, build and checks that the APK contains no retired embedded assets. Source preparation
    repairs routine divergence and portable docs while preserving local work.
    Scheduled runs must not use `--committed-source` to hide compatible changes.
    Known build failures retain their number/logs without preventing later nights.
@@ -53,8 +53,7 @@ future APK updates require the same certificate.
    before publication; broker denials never trigger fallback or policy widening.
 5. Publish committed source archives and public build-proof JSON as GitHub
    release assets using the authorized public Nightly catalog. Proof includes
-   exact WMAPP/Flight Deck commits, source archive hashes, FD build identity and
-   asset hashes, APK hash/version/package/certificate and publisher identity.
+   the exact NBrowser commit and source archive hash, APK hash/version/package/certificate and publisher identity.
    Never include operational logs, local paths, credentials or device identifiers.
 6. Run `prepare-public` after `public-assets`. It uploads the icon to the same
    authorized GitHub release, downloads/verifies that icon and the public APK,
@@ -106,11 +105,5 @@ Configure `WMAPP_ZAPSTORE_PUBLISHER_NPUB` and the matching publisher in a privat
 
 Set `WMAPP_ZAPSTORE_PUBLISHER_HEX` to the public hex encoding of the same verified publisher used in `WMAPP_ZAPSTORE_PUBLISHER_NPUB`. The broker refuses to run without it; event and broker identity checks retain exact publisher pinning.
 
-Flight Deck asset directories are registered recursively by the bundle updater
-because Flutter directory declarations include only their immediate files. Keep
-every built asset hash in the APK check, including nested fonts and legal pages.
-If an interrupted helper leaves `building` after APK asset validation fails,
-`fail-build --day <original-day>` reproduces that exact retained APK failure and
-requires same ownership, complete live history and no publisher signing or delivery
-evidence before recording `failed_before_delivery`. It never authorizes a same-day
-rebuild, upload, publication, number reuse or removal of the retained APK.
+Browser release APK validation rejects `assets/flightdeck/` and
+`assets/ambulando/` payloads. No frontend identity, checkout or archive is needed.

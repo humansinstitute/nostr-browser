@@ -47,18 +47,9 @@ git pull --ff-only
 ./build_ios_release.sh
 ```
 
-The release helper rebuilds the FIPS core and automatically clones and builds
-the latest Flight Deck `main` from `https://github.com/OtherStuffAI/wm-flightdeck.git`.
-It logs the fetched source commit and build number, then verifies and bundles
-the generated assets before Flutter builds. `FLIGHT_DECK_DIR` explicitly overrides
-this with a local checkout; unset it when requesting upstream main. The resulting
-device app is `app/build/ios/iphoneos/Runner.app`.
-
-The default follows published GitHub main, which can lag committed local main.
-When the task explicitly requires newer local commits, clone that exact main
-into an isolated checkout, install its locked dependencies, and set
-`FLIGHT_DECK_DIR` to it. Build fresh and record the exact commit; do not use a
-dirty working tree or stale dist as evidence of latest source.
+The release helper rebuilds the pinned FIPS core and Flutter browser only.
+The device app is `app/build/ios/iphoneos/Runner.app`. No Flight Deck checkout
+or generated frontend is needed. Record the exact browser source commit.
 
 Install and launch it on the connected phone:
 

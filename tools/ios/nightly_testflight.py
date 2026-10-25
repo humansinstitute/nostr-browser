@@ -39,20 +39,20 @@ def save(path, value):
     temp.replace(path)
 
 
-def source_identity(fd):
-    """Return the exact clean committed source pair that a claim authorizes."""
+def source_identity():
+    """Return the exact clean committed browser source that a claim authorizes."""
     source = {}
-    for name, repo in [('nbrowser', ROOT), ('flightdeck', Path(fd))]:
+    for name, repo in [('nbrowser', ROOT)]:
         if git(repo, 'branch', '--show-current') != 'main':
-            raise ValueError('Nightly source claims require main in both repositories.')
+            raise ValueError('Nightly source claims require main in the browser repository.')
         if git(repo, 'status', '--porcelain'):
             raise ValueError('Commit compatible source before claiming its release.')
         source[name] = git(repo, 'rev-parse', 'HEAD')
     return source
 
 
-def _valid_source(source):
-    return (isinstance(source, dict) and set(source) == {'nbrowser', 'flightdeck'} and
+def _valid_source(source, *, browser_only=False):
+    return (isinstance(source, dict) and set(source) in ([{'nbrowser'}] if browser_only else [{'nbrowser'}, {'nbrowser', 'flightdeck'}]) and
             all(isinstance(value, str) and len(value) == 40 and
                 all(char in '0123456789abcdef' for char in value) for value in source.values()))
 
@@ -97,8 +97,8 @@ def transition(directory, action, owner, day, result=None, source=None):
         ledger = _ledger(json.loads(path.read_text())) if path.exists() else {'schema': SCHEMA, 'days': {}}
         days = ledger['days']
         if action == 'claim':
-            if not _valid_source(source):
-                raise ValueError('Claim requires exact committed NBrowser and Flight Deck source.')
+            if not _valid_source(source, browser_only=True):
+                raise ValueError('Claim requires exact committed NBrowser source.')
             if active_claim(ledger):
                 raise ValueError('Another nightly release is active; reconcile it before another run. No automatic expiry.')
             record = days.setdefault(day, {'attempts': []})
@@ -228,9 +228,9 @@ def retry_source(directory, owner, previous_owner, day, run, states, history):
         return {'day': day, 'attempt': len(attempts), **entry}
 
 
-def prerequisites(fd):
+def prerequisites():
     repos = {}
-    for name, repo in [('flightdeck', fd), ('nbrowser', ROOT)]:
+    for name, repo in [('nbrowser', ROOT)]:
         repos[name] = {'branch': git(repo, 'branch', '--show-current'),
                        'commit': git(repo, 'rev-parse', 'HEAD'),
                        'status': git(repo, 'status', '--porcelain'),
@@ -279,14 +279,13 @@ def main():
     parser.add_argument('action', choices=('dry-run', 'claim', 'finish', 'resume-readback', 'retry-source'))
     parser.add_argument('--run', help='Exact delivered run for readback continuation only.')
     parser.add_argument('--previous-owner', help='Explicit finished-claim owner for later-worker readback only.')
-    parser.add_argument('--flightdeck', type=Path, default=ROOT.parent / 'wm/flightdeck')
     parser.add_argument('--owner', default=os.environ.get('SESSION_ID'))
     parser.add_argument('--day', help='Claimed Perth date, YYYY-MM-DD; finish must use claim output.')
     parser.add_argument('--result', choices=('blocked_auth', 'failed', 'processing', 'action_required', 'testing'))
     args = parser.parse_args()
     safe_private()
     if args.action == 'dry-run':
-        output = prerequisites(args.flightdeck)
+        output = prerequisites()
         output['private_path_verified'] = True
         output['ledger_present'] = (PRIVATE / 'ledger.json').exists()
     else:
@@ -330,7 +329,7 @@ def main():
                 raise ValueError('Readback continuation app mismatch.')
             output = resume_readback(PRIVATE, args.owner, day, args.run, state, args.previous_owner)
         else:
-            source = source_identity(args.flightdeck) if args.action == 'claim' else None
+            source = source_identity() if args.action == 'claim' else None
             output = transition(PRIVATE, args.action, args.owner, day, args.result, source)
     print(json.dumps(output, indent=2))
 

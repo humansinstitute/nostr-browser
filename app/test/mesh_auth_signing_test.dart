@@ -115,11 +115,10 @@ class Harness {
         home: Scaffold(
           body: BrowserScreen(
             key: key,
-            config: config,
+            config: config.copyWith(trustedOrigins: [localFlightDeckUrl]),
             bridge: realBridge ?? signer,
             signerStore: store,
             profileRelayClient: NostrProfileRelayClient(relays: const []),
-            localFlightDeckUrl: localFlightDeckUrl,
             onOpenDrawer: () {},
             onOpenSetup: () {},
             onOpenSigner: () {},
@@ -138,8 +137,12 @@ class Harness {
       'wingman.browser.last_signer_npub.v1',
       config.deviceNpub,
     );
-    await BrowserBookmarkStore()
-        .saveBuiltInStartup(config.deviceNpub, builtInStartup);
+    if (builtInStartup) {
+      await BrowserBookmarkStore().save(config.deviceNpub, [
+        BrowserBookmark(
+            title: 'External app', url: localFlightDeckUrl, startup: true),
+      ]);
+    }
     installFakeWebViewPlatform();
     await tester.pumpWidget(widget());
     await tester.pumpAndSettle();
@@ -269,7 +272,7 @@ void main() {
     final identity = NostrCrypto.importIdentity('1'.padLeft(64, '0'));
     final h = Harness(localFlightDeckUrl: appPage, signerVault: vault)
       ..config = AppConfig.defaults().copyWith(
-        flightDeckUrl: 'https://flightdeck.example',
+        flightDeckUrl: appPage,
         deviceNpub: identity.npub,
         devicePublicKeyHex: identity.publicKeyHex,
         deviceSecret: identity.nsec,

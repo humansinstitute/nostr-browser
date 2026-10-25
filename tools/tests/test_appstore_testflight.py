@@ -180,7 +180,7 @@ class AppleTests(unittest.TestCase):
 class RunnerTests(unittest.TestCase):
     def test_reservation_uses_upload_version_and_local_number(self):
         c=client(); history(c,[upload('30','0.2.0','COMPLETE')]);c.audience=Mock(return_value={})
-        source={'nbrowser':'a'*40,'flightdeck':'b'*40}
+        source={'nbrowser':'a'*40}
         with tempfile.TemporaryDirectory() as d, patch.object(release,'PRIVATE',Path(d)), patch.object(api,'local_states',return_value=iter([(Path(d)/'old/state.json',{'build':40,'stage':'initialized'})])), patch.object(api,'require_daily_claim',return_value={'source':source}):
             s=api.reserve(release,Path(d)/'new',c)
             self.assertEqual((s['build'],s['version']),(41,'0.2.0'))
@@ -188,7 +188,7 @@ class RunnerTests(unittest.TestCase):
 
     def test_pending_barriers_do_not_create_reservation(self):
         c=client();history(c,[upload()]);c.audience=Mock(return_value={})
-        with tempfile.TemporaryDirectory() as d, patch.object(release,'PRIVATE',Path(d)), patch.object(api,'require_daily_claim',return_value={'source':{'nbrowser':'a'*40,'flightdeck':'b'*40}}):
+        with tempfile.TemporaryDirectory() as d, patch.object(release,'PRIVATE',Path(d)), patch.object(api,'require_daily_claim',return_value={'source':{'nbrowser':'a'*40}}):
             run=Path(d)/'new'
             with self.assertRaises(ValueError):api.reserve(release,run,c)
             self.assertFalse(run.exists())
@@ -283,7 +283,7 @@ class RunnerTests(unittest.TestCase):
     def test_build_requires_app_identity_before_any_snapshot(self):
         c=client()
         with tempfile.TemporaryDirectory() as d:
-            source={'nbrowser':'a'*40,'flightdeck':'b'*40}
+            source={'nbrowser':'a'*40}
             run=Path(d);release.write(run/'state.json',{'api':True,'app_id':APP,'audience':'internal',
                 'build':11,'version':'0.1.7','stage':'initialized','source':source})
             a=SimpleNamespace(action='api-build',auth_reference='unused')
@@ -292,40 +292,31 @@ class RunnerTests(unittest.TestCase):
                 snapshot.assert_not_called()
                 self.assertEqual(release.read(run/'state.json')['stage'],'initialized')
 
-    def test_build_orders_isolated_fd_before_wm_and_validates_signatures(self):
+    def test_build_snapshots_only_browser_and_validates_signatures(self):
         c=client();c.preflight=Mock(return_value={'versions':[{'attributes':{'platform':'IOS','version':'0.1.7'}}], 'pending_upload_ids':[],'builds':[build()],'uploads':[]})
         c.xcode_args=Mock(return_value=[])
         with tempfile.TemporaryDirectory() as d:
-            source={'nbrowser':'a'*40,'flightdeck':'a'*40}
+            source={'nbrowser':'a'*40}
             run=Path(d);release.write(run/'state.json',{'api':True,'app_id':APP,'audience':'internal',
                 'build':11,'version':'0.1.7','stage':'initialized','source':source})
-            a=SimpleNamespace(action='api-build',auth_reference='unused',flightdeck=Path('/fd'))
+            a=SimpleNamespace(action='api-build',auth_reference='unused')
             actions=[]
             def snapshot(r,repo,target,commit=None):
                 actions.append('snapshot-'+target.name);target.mkdir()
-                if target.name=='flightdeck':
-                    (target/'.build-meta.json').write_text('{"absoluteVersion":2246}')
-                    (target/'release-notes.json').write_text('{"releases":[]}')
                 return 'a'*40
             def run_command(args,**kw):
                 owner_file(Path(kw['stdout'].name).resolve())
                 actions.append(' '.join(map(str,args)))
-                if args==['bun','run','build']:
-                    dist=kw['cwd']/'dist';dist.mkdir()
-                    (dist/'version.json').write_text(json.dumps({'buildId':kw['env']['FLIGHTDECK_BUILD_ID']}))
-                if str(args[0]).endswith('update_flightdeck_bundle.sh'):
-                    import shutil
-                    shutil.copytree(run/'flightdeck/dist',run/'wmapp/app/assets/flightdeck')
                 return SimpleNamespace(returncode=0)
             def signatures(*args):actions.append('signed-both-targets')
             def command(args):
                 if 'remote' in args:
                     return release.SOURCE_REPOSITORY.encode()
                 return b'100'
-            with patch.object(api,'Client',return_value=c), patch.object(api,'require_daily_claim',return_value={'source':source}), patch.object(api,'delivery_barrier'), patch.object(release,'project_settings'), patch.dict(os.environ,{'FLIGHT_DECK_PG_APP_NPUB':'verified-fixture'}), patch.object(nightly,'source_identity',return_value=source), patch.object(api,'snapshot',side_effect=snapshot), patch.object(release,'command',side_effect=command), patch.object(api.subprocess,'run',side_effect=run_command), patch.object(release,'signed_app',side_effect=signatures), patch.object(release,'validate_artifacts',return_value={'sha256':'fixture'}), patch('release_sources.source_lock',return_value=__import__('contextlib').nullcontext()), patch('testflight_export_recovery.retain_export_logs'):
+            with patch.object(api,'Client',return_value=c), patch.object(api,'require_daily_claim',return_value={'source':source}), patch.object(api,'delivery_barrier'), patch.object(release,'project_settings'), patch.object(nightly,'source_identity',return_value=source), patch.object(api,'snapshot',side_effect=snapshot), patch.object(release,'command',side_effect=command), patch.object(api.subprocess,'run',side_effect=run_command), patch.object(release,'signed_app',side_effect=signatures), patch.object(release,'validate_artifacts',return_value={'sha256':'fixture'}), patch('release_sources.source_lock',return_value=__import__('contextlib').nullcontext()), patch('testflight_export_recovery.retain_export_logs'):
                 api.execute(release,a,run)
-            self.assertLess(actions.index('snapshot-wmapp'),actions.index('bun run build'))
-            self.assertLess(actions.index('bun run test:release'),actions.index('bun run build'))
+            self.assertLess(actions.index('snapshot-wmapp'), next(i for i,x in enumerate(actions) if 'flutter build ios' in x))
+            self.assertFalse(any('bun run' in x or 'snapshot-flightdeck' == x or 'update_flightdeck_bundle' in x for x in actions))
             self.assertLess(actions.index('signed-both-targets'),next(i for i,x in enumerate(actions) if '-exportArchive' in x))
             self.assertEqual(release.read(run/'state.json')['stage'],'exported')
             self.assertEqual(release.read(run/'state.json')['source_repository'],

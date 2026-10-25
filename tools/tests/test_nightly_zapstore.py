@@ -58,12 +58,12 @@ class NightlyTests(unittest.TestCase):
                 (target/'release-notes.json').write_text('{"releases":[]}')
                 return 'a'*40
             def run(args, **kw):
-                return SimpleNamespace(returncode=1 if args==['bun','run','test:release'] else 0)
-            with patch.object(n,'ROOT',root), patch.object(n,'PRIVATE',private), patch.object(n,'safe_private'), patch.object(n,'private_key_reference'), patch.object(n,'command',side_effect=command), patch.object(n,'snapshot',side_effect=snapshot), patch.object(n.subprocess,'run',side_effect=run), patch.object(n,'source_lock',return_value=contextlib.nullcontext()), patch.dict(os.environ,SESSION_ID='android-worker',FLIGHT_DECK_PG_APP_NPUB='verified'), patch.object(sys,'argv',['nightly','build','--flightdeck',str(root)]):
+                return SimpleNamespace(returncode=1 if args==['flutter','test'] else 0)
+            with patch.object(n,'ROOT',root), patch.object(n,'PRIVATE',private), patch.object(n,'safe_private'), patch.object(n,'private_key_reference'), patch.object(n,'command',side_effect=command), patch.object(n,'snapshot',side_effect=snapshot), patch.object(n.subprocess,'run',side_effect=run), patch.object(n,'source_lock',return_value=contextlib.nullcontext()), patch.dict(os.environ,SESSION_ID='android-worker'), patch.object(sys,'argv',['nightly','build']):
                 with self.assertRaisesRegex(ValueError,'failed'): n.main()
             retained=json.loads(ledger.read_text())
             self.assertEqual(retained['runs'][day]['stage'],'failed_before_delivery')
-            self.assertEqual(retained['runs'][day]['failure_log'],'fd-test-release.log')
+            self.assertEqual(retained['runs'][day]['failure_log'],'flutter-test.log')
             self.assertEqual(n.reserve(retained,'next-night','next-worker',0,'0.1.7')['stage'],'reserved')
             self.assertIn('active',(apple/'ledger.json').read_text())
     def test_snapshot_has_real_source_index_and_preserves_shared_state(self):
@@ -126,9 +126,6 @@ class AssetFailureRecoveryTests(unittest.TestCase):
         import tempfile, zipfile
         with tempfile.TemporaryDirectory() as temp:
             run=Path(temp)
-            (run/'flightdeck/dist/fonts').mkdir(parents=True)
-            (run/'flightdeck/dist/fonts/example.woff2').write_bytes(b'font')
-            (run/'flightdeck/dist/version.json').write_text('{"buildId":"test"}')
             with zipfile.ZipFile(run/'app-release.apk','w') as archive:
                 archive.writestr('assets/flutter_assets/assets/flightdeck/index.html','page')
             before=(run/'app-release.apk').read_bytes()

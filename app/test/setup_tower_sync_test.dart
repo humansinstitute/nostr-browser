@@ -48,7 +48,6 @@ void main() {
     required AppConfig config,
     required ValueChanged<AppConfig> onConfigChanged,
     String fipsState = 'running',
-    String localFlightDeckUrl = 'http://localhost:47831',
     Future<void> Function()? onClearBrowserData,
     Size size = const Size(1000, 900),
   }) async {
@@ -61,7 +60,6 @@ void main() {
         body: SetupScreen(
           key: ValueKey('settings-$fipsState'),
           config: config,
-          localFlightDeckUrl: localFlightDeckUrl,
           fipsRuntime: runtime(fipsState),
           onConfigChanged: onConfigChanged,
           onClearBrowserData: onClearBrowserData ?? () async {},
@@ -141,7 +139,6 @@ void main() {
         return Scaffold(
           body: SetupScreen(
             config: config,
-            localFlightDeckUrl: 'http://localhost:47831',
             fipsRuntime: runtime('running'),
             onConfigChanged: (next) => rebuild(() => config = next),
             onClearBrowserData: () async {},
@@ -152,7 +149,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    expect(find.text('http://localhost:47831'), findsOneWidget);
+    expect(find.text('http://localhost:47831'), findsNothing);
     expect(find.text('https://alpha.example'), findsOneWidget);
     expect(find.text('https://beta.example'), findsOneWidget);
     expect(find.textContaining('exact origins'), findsOneWidget);
@@ -182,7 +179,6 @@ void main() {
     await pumpSettings(
       tester,
       config: AppConfig.defaults(),
-      localFlightDeckUrl: '',
       onConfigChanged: (_) {},
     );
     expect(find.text('No sites have permission yet.'), findsOneWidget);
@@ -248,24 +244,7 @@ void main() {
     expect(find.text('Private relay diagnostics'), findsOneWidget);
     expect(find.text('Node: npub1diagnosticfixture'), findsOneWidget);
     expect(find.text('Refresh'), findsOneWidget);
-    expect(find.text('External Flight Deck URL'), findsOneWidget);
-
-    await reveal(
-        tester, find.byKey(const ValueKey('external-flight-deck-url')));
-    await tester.enterText(
-      find.byKey(const ValueKey('external-flight-deck-url')),
-      'https://new.example/workspace',
-    );
-    await reveal(
-      tester,
-      find.byKey(const ValueKey('save-external-flight-deck')),
-    );
-    await tester.tap(find.byKey(const ValueKey('save-external-flight-deck')));
-    await tester.pumpAndSettle();
-
-    expect(config.flightDeckUrl, 'https://new.example/workspace');
-    expect(config.trustedOrigins, isEmpty);
-    expect(
-        find.textContaining('Previous pairings were revoked.'), findsOneWidget);
+    expect(find.text('External Flight Deck URL'), findsNothing);
+    expect(config.flightDeckUrl, 'https://old.example/workspace');
   });
 }

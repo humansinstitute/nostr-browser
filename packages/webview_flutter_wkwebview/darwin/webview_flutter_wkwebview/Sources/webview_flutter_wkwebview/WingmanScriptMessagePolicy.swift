@@ -12,9 +12,10 @@ enum WingmanScriptMessagePolicy {
       let frameURL = message.frameInfo.request.url else { return false }
     if message.name == "WingmanGrasp" {
       let origin = message.frameInfo.securityOrigin
-      let bundled = origin.protocol == "http" && origin.host == "127.0.0.1" && origin.port == 47831
+      // Dart additionally requires explicit configured origin approval for local apps.
+      let local = origin.protocol == "http" && ["localhost", "127.0.0.1", "::1"].contains(origin.host)
       let defaultPort = origin.protocol == "https" ? 443 : 80
-      guard (origin.protocol == "https" || bundled), origin.host == currentURL.host,
+      guard (origin.protocol == "https" || local), origin.host == currentURL.host,
         (origin.port == 0 ? defaultPort : origin.port) == (currentURL.port ?? defaultPort) else { return false }
     }
     return currentURL.scheme == frameURL.scheme

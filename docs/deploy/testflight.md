@@ -53,7 +53,7 @@ actual release. Commit tested source before building and keep source stable.
 Then use `run --run "$RUN" --dry-run`, followed by `run --run "$RUN"`.
 The run records source commit/diff and export-policy SHA-256, archive file
 hashes, IPA SHA-256 and both signed executable hashes. Build logs record the
-fetched Flight Deck commit/bundle version and pinned native core revision.
+browser source commit and pinned native core revision.
 Both targets retain the same signing/profile/entitlement checks as private
 releases. A policy change invalidates artifact validation.
 
@@ -171,7 +171,7 @@ python3 tools/ios/testflight_release.py run --run private-0.1.7-9
 `run` forwards the explicit version/build to the existing build helper, preserving
 `app/pubspec.yaml`. It preserves prior Flutter archive/IPA directories under the
 private run and verifies their hashes, builds the pinned native core and current
-Flight Deck bundle, then retains a run-specific archive. It validates Runner and
+browser, then retains a run-specific archive. It validates Runner and
 FipsPacketTunnel identifiers, versions, teams, signatures and packet tunnel
 entitlements. Export validation additionally requires unexpired App Store
 profiles with no device list, no enterprise provisioning and no debug signing.
@@ -367,9 +367,9 @@ cd ..
 ./build_ios_testflight.sh
 ```
 
-The standalone helper builds the pinned FIPS core, fetches and builds Flight Deck
-main, archives Runner, and checks that a fresh IPA was exported. Record the Flight
-Deck commit and bundle version from the build output. Preserve an existing
+The standalone helper builds the pinned FIPS core and Flutter browser,
+archives Runner, and checks that a fresh IPA was exported. Record the browser
+source commit and app version from the build output. Preserve an existing
 archive before rebuilding if it is needed for comparison or recovery.
 
 Inspect each signed target, not just Runner:
@@ -470,7 +470,7 @@ accepts the release evidence.
 The private nightly runner also supports `api-preflight`, `api-reserve`,
 `api-build`, `api-upload` and `api-readback`. See
 [nightly-testflight.md](nightly-testflight.md) for credential-reference setup,
-complete history/audience gates, exact committed isolated Flight Deck-first
+complete history/audience gates, exact committed isolated browser
 builds, cancellation reconciliation, daily claims and bounded processing checks.
 These actions preserve the existing archive/IPA and both-target signature
 validation and durable `upload_pending` barrier. They use only the existing

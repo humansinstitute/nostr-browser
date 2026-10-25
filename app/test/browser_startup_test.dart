@@ -45,7 +45,6 @@ void main() {
               body: BrowserScreen(
                   key: key,
                   config: AppConfig.defaults().copyWith(deviceNpub: identity),
-                  localFlightDeckUrl: builtIn,
                   bridge: NativeCoreBridge(),
                   signerStore: SignerStore(),
                   onOpenDrawer: () {},
@@ -95,44 +94,30 @@ void main() {
   }
 
   testWidgets(
-      'built-in star persists, renders, opens once and cannot be deleted',
-      (tester) async {
-    await seed(builtInStar: true);
-    await tester.pumpWidget(browser('npub-a'));
-    await tester.pumpAndSettle();
-    expect(fakeLoadedRequestUrls, [builtIn]);
-    await tester.tap(find.byTooltip('New tab'));
-    await tester.pumpAndSettle();
-    expect(
-        fakeLoadedHtmlStrings.last,
-        contains(
-            'aria-label="Open Flight Deck on startup" aria-pressed="true"'));
-    final controller = fakeWebViewControllerCreationCount - 1;
-    send(controller, 'removeBookmark', {'url': builtIn});
-    await tester.pumpAndSettle();
-    expect(await BrowserBookmarkStore().loadBuiltInStartup('npub-a'), isTrue);
-    expect(fakeLoadedHtmlStrings.last, contains('Flight Deck'));
-    expect(fakeLoadedRequestUrls, [builtIn]);
-  });
-
-  testWidgets(
-      'multiple stars including built-in deduplicate and persist across relaunch',
+      'obsolete built-in stars and saved slots never launch; external app survives',
       (tester) async {
     await seed(stars: 2, builtInStar: true);
     final store = BrowserBookmarkStore();
     await store.save('npub-a', [
       ...await store.load('npub-a'),
+      const BrowserBookmark(title: 'Old slot', url: builtIn, startup: true),
       const BrowserBookmark(
-          title: 'Old built-in bookmark', url: builtIn, startup: true)
+          title: 'Flight Deck', url: 'https://deck.example/', startup: true),
     ]);
     for (var launch = 0; launch < 2; launch++) {
       installFakeWebViewPlatform();
       await tester.pumpWidget(browser('npub-a'));
       await tester.pumpAndSettle();
-      expect(fakeLoadedRequestUrls, [builtIn, first, second]);
+      expect(fakeLoadedRequestUrls, [first, second, 'https://deck.example/']);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
     }
+    // Migration is a read filter; the original user data remains recoverable.
+    expect(await store.loadBuiltInStartup('npub-a'), isTrue);
+    expect(
+        await SharedPreferencesAsync()
+            .getString('${BrowserBookmarkStore.keyPrefix}npub-a'),
+        contains(builtIn));
   });
 
   testWidgets(
@@ -244,10 +229,8 @@ void main() {
     preferences.reads.last.complete();
     await tester.pumpAndSettle();
     expect(fakeLoadedRequestUrls, isEmpty);
-    expect(
-        fakeLoadedHtmlStrings.last,
-        contains(
-            'aria-label="Open Flight Deck on startup" aria-pressed="false"'));
+    expect(fakeLoadedHtmlStrings.last,
+        isNot(contains('Open Flight Deck on startup')));
     expect(fakeLoadedHtmlStrings.last, contains('color:#ffffff;text-shadow'));
   });
 }

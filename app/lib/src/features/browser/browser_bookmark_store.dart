@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../../core/retired_bundled_app.dart';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 class BrowserBookmark {
@@ -40,7 +42,9 @@ class BrowserBookmark {
   static BrowserBookmark? tryParse(Object? value) {
     if (value is! Map<String, dynamic>) return null;
     final canonicalUrl = canonicalBrowserBookmarkUrl(value['url']?.toString());
-    if (canonicalUrl == null) return null;
+    if (canonicalUrl == null || isRetiredBundledAppUrl(canonicalUrl)) {
+      return null;
+    }
     final rawTitle = value['title']?.toString().trim() ?? '';
     return BrowserBookmark(
       title: rawTitle.isEmpty ? Uri.parse(canonicalUrl).host : rawTitle,
@@ -202,15 +206,13 @@ String? safeBookmarkImage(String? value) {
 
 /// Reject conflicts instead of silently merging or dropping another saved app.
 String? bookmarkEditError(List<BrowserBookmark> bookmarks,
-    BrowserBookmark original, String title, String url,
-    {String? reservedUrl}) {
+    BrowserBookmark original, String title, String url) {
   if (title.trim().isEmpty) return 'Enter an app name.';
   final canonical = canonicalBrowserBookmarkUrl(url);
   if (canonical == null) {
     return 'Enter a complete HTTP or HTTPS URL without credentials or spaces.';
   }
-  if (canonical == reservedUrl ||
-      bookmarks.any((b) => b.url != original.url && b.url == canonical)) {
+  if (bookmarks.any((b) => b.url != original.url && b.url == canonical)) {
     return 'An app with this launch URL is already saved.';
   }
   return null;

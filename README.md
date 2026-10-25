@@ -10,7 +10,7 @@ Nostr Browser is the planned native edge client for Wingman Be Free.
 The initial product combines:
 
 - Wingman Drive: a desktop/mobile file surface backed by Tower HTTP storage.
-- Nostr Browser: an embedded browser for Flight Deck and WApps with native Nostr signing.
+- Nostr Browser: a general browser for websites and external WApps with native Nostr signing.
 - Wingman Signer: local per-device Nostr key custody for NIP-98 and approved app signing.
 
 Tower remains the source of truth for workspace identity, scopes, channels, groups, file metadata, and object storage.
@@ -20,28 +20,11 @@ Tower remains the source of truth for workspace identity, scopes, channels, grou
 The original WM App source remains at `https://github.com/OtherStuffAI/wm-app`.
 Nostr Browser development uses the independent `~/code/nbrowser` checkout.
 
-Every root `build_*.sh` script downloads the latest `main` from
-`https://github.com/OtherStuffAI/wm-flightdeck.git`, installs its locked
-dependencies, builds and verifies Flight Deck, then bundles it before building
-Flutter. The bundled output in `app/assets/flightdeck` is generated locally and
-ignored by Git; it should not be committed to this repository. Git, Bun,
-Node.js, rsync and network access are required; private repository access uses
-your normal Git credentials.
-
-The clone, dependencies and temporary dependency caches are removed on success,
-failure or interruption. Only the bundled output in `app/assets/flightdeck`
-is retained. Refreshes preserve the committed Flight Deck version number and log
-the source commit. The public Flight Deck app identifier is supplied by default;
-`FLIGHT_DECK_PG_APP_NPUB` can override it. A download, install, build or verification
-failure stops the app build instead of silently using an old bundle.
-
-For local development, `FLIGHT_DECK_DIR=/path/to/flightdeck ./build_runapp.sh`
-builds that checkout instead, using its existing dependencies and configuration.
-This explicit override is never deleted or pulled. To manually reuse its built
-assets, run `FLIGHT_DECK_DIR=/path/to/flightdeck ./tools/update_flightdeck_bundle.sh --use-existing-dist`.
-
-`runapp.sh` only launches an existing app. Direct `flutter build` commands still
-use whichever assets are already bundled.
+Platform helpers build Nostr Browser and its native dependencies only. No
+Ambulando/Flight Deck checkout, frontend build, app identity or bundle download
+is required. Native Ambulando apps provide that experience separately. External
+web URLs, including externally hosted Ambulando, remain ordinary browser pages
+and editable bookmarks. `runapp.sh` launches an existing macOS build.
 
 The former `~/code/wingmanbefree/wm-app` checkout is a legacy checkpoint and
 should not be used for new changes.
@@ -151,13 +134,11 @@ audit entries are persisted locally, and the Signer tab can revoke approvals or
 clear the audit log. A static signer test page is served from the Flutter web
 build at `/signer-test.html` for native WebView/manual bridge checks.
 
-Fresh dev builds use the configured development channel and a browser home page
-with Flight Deck and Publisher Autopilot bookmarks:
-
-- Tower URL: `https://tower.example.com`
-- Flight Deck URL: `https://flightdeck.example.com`
-- Autopilot URL: `https://autopilot.example.com`
-- Trusted origins: local Tower/dev Flight Deck, `service-1.example.com`, `service-2.example.com`, and `service-3.example.com`
+Fresh builds open a New Tab page containing only the user's saved apps. There
+are no built-in application bookmarks or application update controls. Old
+built-in startup flags have no effect; the retired browser-owned loopback slot
+is excluded when reading saved bookmarks without deleting the stored data.
+User-saved external URLs retain their titles, launch URLs and startup selection.
 
 On first launch, the app asks for the `nsec` to sign with and a local PIN, then
 creates the local signer vault described above.
@@ -188,17 +169,13 @@ $EDITOR .env.local
 Then launch through the root helper scripts:
 
 ```bash
-./build_runapp.sh  # pull Nostr Browser, build Flight Deck, build app, launch
+./build_runapp.sh  # pull Nostr Browser, build app, launch
 ./runapp.sh        # launch the existing macOS build
 ```
 
-The build helpers load `.env.local` before preparing the embedded Flight Deck,
-and `runapp.sh` loads it before launch. Values explicitly exported by the calling
-process take precedence over the file. The canonical public Flight Deck PG app
-npub is built in, so `.env.local` is not required for a normal build; set
-`FLIGHT_DECK_PG_APP_NPUB` only to build an intentional alternate namespace.
-`runapp.sh` also passes `WMAPP_REPO_DIR` to the app. The signer identity still
-comes from the encrypted onboarding vault, not from shell environment variables.
+`runapp.sh` loads `.env.local` before launch and passes `WMAPP_REPO_DIR` to
+the app. Signer identity comes from the encrypted onboarding vault, not shell
+environment variables. Builds do not load frontend-specific environment settings.
 
 The current macOS development build disables the app sandbox because the Flutter shell still invokes the Rust core through `cargo run`. Production packaging should bundle and execute a signed `wmapp-core` binary from inside the app instead.
 
@@ -280,8 +257,6 @@ See:
 - [API Gap Harness](docs/api_gap_harness.md)
 - [WApp Signer Trust Contract](docs/wapp_signer_contract.md)
 
-Builds that fetch Flight Deck use NBrowser's canonical public Flight Deck PG app
-npub by default. `FLIGHT_DECK_PG_APP_NPUB` remains an explicit override for an
-intentional alternate deployment and must be a valid npub. Configure release
-publisher and App Store settings locally as described in the deployment guides;
-public configuration contains no personal publisher identity.
+Configure release publisher and App Store settings locally as described in the
+deployment guides. Public configuration contains no personal publisher identity.
+See [browser-only packaging validation](docs/browser-only-packaging.md).

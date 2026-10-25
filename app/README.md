@@ -14,7 +14,6 @@ Flutter platform folders have been generated for macOS, Linux, web, Android,
 and iOS. To run the current shell locally:
 
 ```bash
-../tools/update_flightdeck_bundle.sh
 flutter pub get
 flutter test
 flutter build web
@@ -86,8 +85,9 @@ enter the exact mesh endpoint and approve native pairing. The workspace's Tower
 service identity is verified over that mesh route before signing is enabled.
 No native Tower URL or reachable public Tower is required. HTTPS is optional.
 
-Built-in Flight Deck is eligible by default. For an external Flight Deck page,
-set its URL in native Setup → Flight Deck browser, save and reload the same tab.
-This explicit page-origin boundary remains separate from general signer trust.
-Keep the same page and workspace to retain local data and pending writes.
-Native Drive sync has its own optional Tower configuration.
+No application is bundled or started by the browser. Open external WApps using
+the address bar or your own bookmarks. HTTPS pages receive the generic
+consent-gated FIPS provider; explicitly configured local loopback origins use
+the same capability. Transport approval remains separate from fresh request
+signing and service identity verification. Native Drive sync retains its own
+optional Tower configuration. See [browser-only packaging](../docs/browser-only-packaging.md).
