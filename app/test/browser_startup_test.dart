@@ -1,5 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:wingman_app/src/app.dart';
+import 'package:wingman_app/src/core/signer_vault.dart';
+import 'package:wingman_app/src/widgets/immediate_pin_field.dart';
+import 'pin_input_test_helpers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -33,18 +37,63 @@ final class _DelayedPreferences extends InMemorySharedPreferencesAsync {
   }
 }
 
+final class _RecoveryVault extends SignerVault {
+  int unlocks = 0;
+  @override
+  Future<SignerVaultRecord?> loadRecord() async => SignerVaultRecord(
+      version: 1,
+      kdf: '',
+      iterations: 1,
+      salt: '',
+      nonce: '',
+      ciphertext: '',
+      mac: '',
+      npub: 'npub-a',
+      publicKeyHex: '',
+      createdAt: DateTime(2026));
+  @override
+  Future<SignerVaultUnlock> unlock({required String pin}) async {
+    unlocks++;
+    if (pin != '1234') throw const SignerVaultException('Incorrect PIN.');
+    return const SignerVaultUnlock(
+        nsec: 'fixture-secret', npub: 'npub-a', publicKeyHex: '');
+  }
+}
+
+final class _SlowTabsPreferences extends InMemorySharedPreferencesAsync {
+  _SlowTabsPreferences() : super.empty();
+  Completer<void>? writeGate;
+  Completer<void>? readGate;
+  @override
+  Future<bool> setString(
+      String key, String value, SharedPreferencesOptions options) async {
+    if (key.startsWith('wingman.browser.tabs.v3.')) await writeGate?.future;
+    return super.setString(key, value, options);
+  }
+
+  @override
+  Future<String?> getString(
+      String key, SharedPreferencesOptions options) async {
+    final raw = await super.getString(key, options);
+    if (key == 'wingman.browser.tabs.v3.npub-a') await readGate?.future;
+    return raw;
+  }
+}
+
 void main() {
   setUp(() {
     SharedPreferencesAsyncPlatform.instance =
         InMemorySharedPreferencesAsync.empty();
     installFakeWebViewPlatform();
   });
-  Widget browser(String identity, {GlobalKey<BrowserScreenState>? key}) =>
+  Widget browser(String identity,
+          {GlobalKey<BrowserScreenState>? key, String secret = ''}) =>
       MaterialApp(
           home: Scaffold(
               body: BrowserScreen(
                   key: key,
-                  config: AppConfig.defaults().copyWith(deviceNpub: identity),
+                  config: AppConfig.defaults()
+                      .copyWith(deviceNpub: identity, deviceSecret: secret),
                   bridge: NativeCoreBridge(),
                   signerStore: SignerStore(),
                   onOpenDrawer: () {},
@@ -120,6 +169,142 @@ void main() {
         contains(builtIn));
   });
 
+  Future<void> snapshot(String identity, List<Map<String, dynamic>> tabs,
+          {int active = 0}) =>
+      SharedPreferencesAsync().setString('wingman.browser.tabs.v3.$identity',
+          jsonEncode({'version': 3, 'active_index': active, 'tabs': tabs}));
+
+  testWidgets(
+      'cold relaunch restores order titles active tab and home before stars',
+      (tester) async {
+    await seed(stars: 1);
+    await snapshot(
+        'npub-a',
+        [
+          {'is_home': false, 'url': second, 'title': 'Working second'},
+          {'is_home': true, 'url': null, 'title': 'New Tab'},
+          {'is_home': false, 'url': first, 'title': 'Working first'},
+        ],
+        active: 2);
+    for (var launch = 0; launch < 2; launch++) {
+      installFakeWebViewPlatform();
+      fakeFinishRequests = false;
+      await tester.pumpWidget(browser('npub-a'));
+      await tester.pumpAndSettle();
+      expect(find.text('Working second'), findsOneWidget);
+      expect(find.text('Working first'), findsOneWidget);
+      expect(fakeLoadedRequestUrls, [second, first]);
+      expect(
+          tester.widgetList<IndexedStack>(find.byType(IndexedStack)).last.index,
+          2);
+      expect(find.text('New Tab'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    }
+  });
+
+  testWidgets(
+      'closing last window persists deliberate home instead of startup stars',
+      (tester) async {
+    await seed(stars: 1);
+    await tester.pumpWidget(browser('npub-a'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Close tab'));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    installFakeWebViewPlatform();
+    await tester.pumpWidget(browser('npub-a'));
+    await tester.pumpAndSettle();
+    expect(fakeLoadedRequestUrls, isEmpty);
+    expect(find.text('New Tab'), findsOneWidget);
+  });
+
+  testWidgets(
+      'same identity lock and PIN unlock keep controllers windows and active tab',
+      (tester) async {
+    final key = GlobalKey<BrowserScreenState>();
+    await tester.pumpWidget(browser('npub-a', key: key, secret: 'test-secret'));
+    await tester.pumpAndSettle();
+    key.currentState!.openTab(first);
+    key.currentState!.openTab(second);
+    await tester.pumpAndSettle();
+    final controllers = fakeWebViewControllerCreationCount;
+    await tester.pumpWidget(browser('npub-a', key: key));
+    await tester.pumpAndSettle();
+    expect(fakeReloadCalls, 0);
+    await tester.pumpWidget(browser('npub-a', key: key, secret: 'test-secret'));
+    await tester.pumpAndSettle();
+    expect(fakeWebViewControllerCreationCount, controllers);
+    expect(fakeReloadCalls, 2);
+    expect(
+        tester.widgetList<IndexedStack>(find.byType(IndexedStack)).last.index,
+        2);
+  });
+
+  testWidgets('rapid navigation and immediate recreate recover newest state',
+      (tester) async {
+    final key = GlobalKey<BrowserScreenState>();
+    await tester.pumpWidget(browser('npub-a', key: key));
+    await tester.pumpAndSettle();
+    key.currentState!.openTab(first);
+    await tester.pumpAndSettle();
+    submitFakeUrlChange(controllerIndex: 1, url: second);
+    await tester.pumpWidget(const SizedBox.shrink());
+    // Do not wait for a persistence debounce or drain disk operations.
+    installFakeWebViewPlatform();
+    await tester.pumpWidget(browser('npub-a'));
+    await tester.pumpAndSettle();
+    expect(fakeLoadedRequestUrls, [second]);
+  });
+
+  for (final raw in [
+    '{broken',
+    '{"version":99,"active_index":0,"tabs":[]}',
+    '{"version":3,"active_index":0,"tabs":[]}',
+    '{"version":3,"active_index":"bad","tabs":[{}]}',
+    '{"version":3,"active_index":0,"tabs":[{"is_home":false,"url":"javascript:alert(1)"}]}',
+    '{"version":3,"active_index":0,"tabs":[{"is_home":false,"url":"https://example.test/","title":42}]}',
+  ]) {
+    testWidgets('corrupt snapshot falls back safely: $raw', (tester) async {
+      await seed(stars: 1);
+      await SharedPreferencesAsync()
+          .setString('wingman.browser.tabs.v3.npub-a', raw);
+      await tester.pumpWidget(browser('npub-a'));
+      await tester.pumpAndSettle();
+      expect(fakeLoadedRequestUrls, [first]);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('cold identity isolation and out of range active index',
+      (tester) async {
+    await snapshot(
+        'npub-a',
+        [
+          {'is_home': false, 'url': first}
+        ],
+        active: 99);
+    await snapshot(
+        'npub-b',
+        [
+          {'is_home': false, 'url': second}
+        ],
+        active: -1);
+    await tester.pumpWidget(browser('npub-b'));
+    await tester.pumpAndSettle();
+    expect(fakeLoadedRequestUrls, [second]);
+    expect(
+        tester.widgetList<IndexedStack>(find.byType(IndexedStack)).last.index,
+        0);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    installFakeWebViewPlatform();
+    await tester.pumpWidget(browser('npub-a'));
+    await tester.pumpAndSettle();
+    expect(fakeLoadedRequestUrls, [first]);
+  });
+
   testWidgets(
       'rapid settings saves update every home without reload or immediate launch',
       (tester) async {
@@ -179,7 +364,8 @@ void main() {
     installFakeWebViewPlatform();
     await tester.pumpWidget(browser('npub-a'));
     await tester.pumpAndSettle();
-    expect(fakeLoadedRequestUrls, [editedUrl]);
+    // Existing working windows take precedence over edited startup stars.
+    expect(fakeLoadedRequestUrls, [first]);
   });
 
   testWidgets(
@@ -232,5 +418,90 @@ void main() {
     expect(fakeLoadedHtmlStrings.last,
         isNot(contains('Open Flight Deck on startup')));
     expect(fakeLoadedHtmlStrings.last, contains('color:#ffffff;text-shadow'));
+  });
+  testWidgets('cold app requires PIN before restoring windows', (tester) async {
+    await snapshot('npub-a', [
+      {'is_home': false, 'url': second}
+    ]);
+    final vault = _RecoveryVault();
+    await tester.pumpWidget(WingmanApp(signerVault: vault));
+    await tester.pumpAndSettle();
+    expect(find.byType(ImmediatePinField), findsOneWidget);
+    expect(find.byType(BrowserScreen), findsNothing);
+    expect(fakeLoadedRequestUrls, isEmpty);
+    expect(vault.unlocks, 0);
+    await enterEditorText(tester, find.byType(ImmediatePinField), '0000');
+    await tester.tap(find.text('Unlock'));
+    await tester.pumpAndSettle();
+    expect(find.text('Incorrect PIN.'), findsOneWidget);
+    expect(fakeLoadedRequestUrls, isEmpty);
+    await enterEditorText(tester, find.byType(ImmediatePinField), '1234');
+    await tester.tap(find.text('Unlock'));
+    await tester.pumpAndSettle();
+    expect(find.byType(BrowserScreen), findsOneWidget);
+    expect(fakeLoadedRequestUrls, [second]);
+    final raw = await SharedPreferencesAsync()
+        .getString('wingman.browser.tabs.v3.npub-a');
+    expect(raw, isNot(contains('fixture-secret')));
+    expect(jsonDecode(raw!).keys.toSet(), {'version', 'active_index', 'tabs'});
+  });
+
+  testWidgets(
+      'slow writes stay ordered and recreated screen waits for latest save',
+      (tester) async {
+    final preferences = _SlowTabsPreferences();
+    SharedPreferencesAsyncPlatform.instance = preferences;
+    final key = GlobalKey<BrowserScreenState>();
+    await tester.pumpWidget(browser('npub-a', key: key));
+    await tester.pumpAndSettle();
+    preferences.writeGate = Completer<void>();
+    key.currentState!.openTab(first);
+    await tester.pumpAndSettle();
+    submitFakeUrlChange(controllerIndex: 1, url: second);
+    await tester.pumpWidget(const SizedBox.shrink());
+    installFakeWebViewPlatform();
+    await tester.pumpWidget(browser('npub-a'));
+    await tester.pumpAndSettle();
+    expect(fakeLoadedRequestUrls, isEmpty);
+    preferences.writeGate!.complete();
+    await tester.pumpAndSettle();
+    expect(fakeLoadedRequestUrls, [second]);
+    final saved = jsonDecode((await SharedPreferencesAsync()
+        .getString('wingman.browser.tabs.v3.npub-a'))!);
+    expect(saved['tabs'].last['url'], second);
+  });
+
+  testWidgets('late disk restore cannot cross identity boundary',
+      (tester) async {
+    final preferences = _SlowTabsPreferences();
+    SharedPreferencesAsyncPlatform.instance = preferences;
+    await snapshot('npub-a', [
+      {'is_home': false, 'url': first}
+    ]);
+    await snapshot('npub-b', [
+      {'is_home': false, 'url': second}
+    ]);
+    preferences.readGate = Completer<void>();
+    final key = GlobalKey<BrowserScreenState>();
+    await tester.pumpWidget(browser('npub-a', key: key));
+    await tester.pumpAndSettle();
+    expect(fakeLoadedRequestUrls, isEmpty);
+    await tester.pumpWidget(browser('npub-b', key: key));
+    await tester.pumpAndSettle();
+    expect(fakeLoadedRequestUrls, [second]);
+    preferences.readGate!.complete();
+    await tester.pumpAndSettle();
+    expect(fakeLoadedRequestUrls, [second]);
+  });
+  testWidgets(
+      'retired packaged app snapshot becomes home without loopback request',
+      (tester) async {
+    await snapshot('npub-a', [
+      {'is_home': false, 'url': builtIn}
+    ]);
+    await tester.pumpWidget(browser('npub-a'));
+    await tester.pumpAndSettle();
+    expect(fakeLoadedRequestUrls, isEmpty);
+    expect(find.text('New Tab'), findsOneWidget);
   });
 }

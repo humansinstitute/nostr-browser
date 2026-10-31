@@ -33,39 +33,39 @@ images and no network connection capability beyond decorative image loads.
 
 ## Startup stars and tab restoration
 
-In edit mode, each app has a startup star, including the built-in Flight Deck /
-Ambulando tile. Stars are off by default for new and existing installations.
-Legacy v1 bookmark records lacking `startup: true` remain unstarred; malformed
-values also fail closed. Saved app stars travel with the bookmark when its URL
-is edited and disappear when it is deleted. Metadata refresh and thumbnail
-changes preserve the star. The built-in choice is a separate identity-scoped
-boolean so it survives changes to the packaged app's local endpoint. It cannot
-be deleted. Label colours accept only `#RRGGBB`; invalid stored values fall back
-to white. Backgrounds, thumbnails, colours and stars are local to the identity.
+In edit mode, each saved app has a startup star. Stars are off by default;
+malformed values fail closed. Stars follow bookmark URL edits and disappear
+when the bookmark is deleted. Metadata refresh preserves the star. Retired
+built-in app choices and the retired browser-owned loopback endpoint are ignored.
+Label colours accept only `#RRGGBB`; invalid values fall back to white.
+Backgrounds, thumbnails, colours and stars are local to the identity.
 
-A fresh session means creation of the native browser screen, including app
-relaunch. After loading preferences, it opens each distinct starred app once,
-with the built-in first if selected, then saved apps in launcher order. With no
-stars it stays on the launcher. Availability of the packaged app never forces
-navigation. Opening or reloading a home tab, changing settings, and native
-background/foreground transitions do not run startup selection again. Settings
-saves update all existing home documents without closing edit mode.
+After PIN unlock on a cold relaunch, a valid identity-scoped
+`wingman.browser.tabs.v3.<identity>` snapshot takes precedence over startup
+stars. Recovery recreates webviews with saved URLs, titles, tab order, active
+tab, prefixes and colours. A saved home-only session is intentional and stays
+home; closing windows does not resurrect older ones. Recovery does not restore
+unsaved forms, page memory or back/forward history. PIN entry is still required
+on cold startup, and document capabilities require fresh consent/authentication.
+No secrets, signatures or transport grants are stored in the snapshot.
 
-Disk tab restoration is intentionally superseded by startup selection at the
-fresh-session boundary. Existing `wingman.browser.tabs.v1.<identity>` records
-are neither read for startup nor removed/overwritten. Normal running tab writes
-now use `wingman.browser.tabs.v3.<identity>` (snapshot version 3); these disk
-records also do not control startup. Within one browser-screen lifetime,
-changing identity saves an in-memory tab snapshot, revokes capabilities, clears
-web state and immediately shows a neutral launcher while preferences load. The
-first visit to another identity applies its stars; returning to an already
-visited identity restores its session URLs, tab order, active tab, titles,
-prefixes and colours rather than running startup again. As before, identity
-switches recreate webviews, so page memory and back/forward history are not
-carried across identities. Ordinary navigation and tab state continue during a
-running identity session. Async reads and settings are checked against the
-identity/document generation, including A→B→A changes. Startup preferences are
-not grants for transport or authentication.
+When no recoverable v3 snapshot exists, each distinct starred external app opens
+once in launcher order. With no stars, the launcher stays open. Corrupt,
+unsupported or invalid snapshots safely fall back to this startup behavior.
+Older v1 records are left untouched. Editing stars does not discard a working
+session or navigate existing windows; stars define the fallback launch set.
+Opening/reloading home and background/foreground transitions never rerun stars.
+
+Tab changes capture state immediately and serialize platform preference writes
+per identity, including across screen recreation. Background and disposal flush
+the latest state; sudden process termination can still lose a write the OS has
+not committed. Disk reads wait for pending writes and verify the identity and
+screen generation before applying results. Within one screen lifetime, identity
+switches capture the departing state, revoke document capabilities and clear web
+state before restoring the destination's own session. A temporary neutral home
+is never saved over a pending restore. Same-identity lock/unlock keeps windows
+and active tab, revokes capabilities on lock, and reloads pages on unlock.
+Startup preferences are not transport or authentication grants.
 
 ## Focused checks
 
@@ -112,16 +112,28 @@ installed build.
 
 ## Manual review
 
-- Open several apps and confirm tile taps reuse the active tab and preserve the
-  full destination URL. Verify built-in Flight Deck and ordinary tab navigation.
-- Star zero, one and several apps (including the built-in), relaunch and verify
-  each selection opens exactly once. Old saved tabs must not add unselected
-  destinations. Toggle several stars without losing edit mode. Reload a launcher
-  and confirm it stays a launcher. Edit a starred URL and verify relaunch follows
-  the new URL; delete it and verify it no longer launches.
-- Enter edit mode using the cog. Edit a long URL into a deliberately shorter
-  route, save, restart the app and reopen it. Verify query/fragment preservation
-  for an untouched URL and reject duplicates without dropping either app.
+Use a disposable test profile/build for relaunch checks; preserve any existing
+user session and do not reset its storage.
+
+- Open several external apps and confirm tile taps reuse the active tab and
+  preserve the full URL, including query and fragment. Select a nonfirst tab,
+  relaunch, unlock with the PIN and verify tab order and active selection.
+- Verify wrong PIN leaves saved pages unopened. Lock and unlock the same identity
+  while running: windows and selection remain, signing is denied while locked,
+  and document capabilities require fresh authorization after reload.
+- In a profile with no recovery snapshot, star zero, one and several external
+  apps and verify the fallback set opens exactly once. Toggle stars without
+  losing edit mode or navigating current pages. Existing recovered windows must
+  take precedence over changed stars. Reload home and confirm it stays home.
+- Close all working tabs until only home remains, relaunch and confirm home
+  remains without resurrecting closed pages or opening stars.
+- Navigate rapidly, immediately background/relaunch, then verify the latest
+  committed URL is restored. Repeat with an identity switch; pages from the
+  departing identity must not appear in the destination session. Test corrupt
+  snapshots only with synthetic fixtures, never by modifying user storage.
+- Enter edit mode using the cog. Edit a long URL to a shorter route, save and
+  reopen its tile. Verify untouched query/fragment preservation and reject
+  duplicates without dropping either app.
 - Choose a custom thumbnail, cancel to discard, then choose again and save.
   Restart and verify persistence. Restore the automatic icon and test a missing
   favicon/manifest. Verify unreadable and oversized images report an error.

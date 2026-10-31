@@ -7,6 +7,7 @@ final fakeLoadedRequestUrls = <String>[];
 final fakeExecutedJavaScripts = <String>[];
 int fakeClearCookieCalls = 0;
 int fakeReloadCalls = 0;
+bool fakeFinishRequests = true;
 int fakeWebViewControllerCreationCount = 0;
 final _fakeWebViewControllers = <_FakePlatformWebViewController>[];
 
@@ -75,6 +76,7 @@ void submitFakePageStarted({
 }
 
 void installFakeWebViewPlatform() {
+  fakeFinishRequests = true;
   fakeLoadedHtmlStrings.clear();
   fakeLoadedRequestUrls.clear();
   fakeExecutedJavaScripts.clear();
@@ -158,7 +160,7 @@ class _FakePlatformWebViewController extends PlatformWebViewController
     if (decision == NavigationDecision.prevent) return;
     _currentUrl = url;
     fakeLoadedRequestUrls.add(url);
-    _navigationDelegate?.finish(_currentUrl!);
+    if (fakeFinishRequests) _navigationDelegate?.finish(_currentUrl!);
   }
 
   @override

@@ -13,6 +13,7 @@ import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
 import '../../theme/browser_theme.dart';
 import '../../core/app_config.dart';
+import '../../core/retired_bundled_app.dart';
 import '../../core/tower_fips_proxy.dart';
 import '../../core/fips_app_target.dart';
 import '../../core/fips_runtime_service.dart';
@@ -151,7 +152,8 @@ class BrowserScreenState extends State<BrowserScreen>
   NostrProfile _profile = const NostrProfile();
   final DiagnosticsStore _diagnosticsStore = DiagnosticsStore();
   Timer? _diagnosticsMaintenance;
-  Timer? _persistTabsTimer;
+  // Shared across screen instances so a rapid relaunch cannot read an older write.
+  static final Map<String, Future<void>> _tabWrites = {};
   bool _clearingWebState = false;
   Completer<void>? _webStateClear;
   bool _restoringTabs = false;
@@ -231,7 +233,6 @@ class BrowserScreenState extends State<BrowserScreen>
     unawaited(_fipsEnabledSubscription?.cancel());
     HardwareKeyboard.instance.removeHandler(_handleKeyboardEvent);
     unawaited(_persistTabsNow());
-    _persistTabsTimer?.cancel();
     _addressBarHideTimer?.cancel();
     _diagnosticsMaintenance?.cancel();
     _tabStripController.dispose();
@@ -1429,7 +1430,6 @@ class BrowserScreenState extends State<BrowserScreen>
     final saving = _persistTabsForSigner(previousSignerNpub);
     // Capture the departing controllers for storage clearing before hiding them.
     final clearing = _clearWebState(resetTabs: false);
-    _persistTabsTimer?.cancel();
     _restoringTabs = true;
     _resetTabsToDefault(persistState: false);
     unawaited(saving);
@@ -1459,7 +1459,7 @@ class BrowserScreenState extends State<BrowserScreen>
     if (!current()) return;
     await _loadBookmarksForSigner(signerNpub);
     if (!current()) return;
-    await _restoreTabsForSigner(signerNpub);
+    await _restoreTabsForSigner(signerNpub, current);
   }
 
   Future<void> _clearWebState({required bool resetTabs}) async {
@@ -1513,10 +1513,22 @@ class BrowserScreenState extends State<BrowserScreen>
     _restoringTabs = wasRestoringTabs;
   }
 
-  Future<void> _restoreTabsForSigner(String signerNpub) async {
-    // Disk restore records never override explicit startup selection. Only
-    // identities already visited in this BrowserScreen restore session state.
-    final snapshot = _sessionTabs[signerNpub];
+  Future<void> _restoreTabsForSigner(
+      String signerNpub, bool Function() current) async {
+    var snapshot = _sessionTabs[signerNpub];
+    final key = _tabsStorageKey(signerNpub);
+    if (snapshot == null && key != null) {
+      try {
+        await _tabWrites[key];
+        if (!current()) return;
+        final raw = await SharedPreferencesAsync().getString(key);
+        if (!current()) return;
+        snapshot = _BrowserTabsSnapshot.decode(raw);
+      } catch (_) {
+        // Unavailable/corrupt preferences must not prevent opening the browser.
+      }
+    }
+    if (!current()) return;
     if (snapshot == null) {
       if (_tabs.length != 1 || !_tabs.single.isHome) {
         _resetTabsToDefault(persistState: false);
@@ -1536,6 +1548,7 @@ class BrowserScreenState extends State<BrowserScreen>
         }
       }
       _restoringTabs = false;
+      _schedulePersistTabs();
       return;
     }
 
@@ -1577,11 +1590,9 @@ class BrowserScreenState extends State<BrowserScreen>
   }
 
   void _schedulePersistTabs() {
-    if (_restoringTabs) return;
-    _persistTabsTimer?.cancel();
-    _persistTabsTimer = Timer(const Duration(milliseconds: 100), () {
-      unawaited(_persistTabsNow());
-    });
+    // Capture synchronously, including navigation just before background/lock.
+    // Serialize disk writes so older saves cannot replace newer navigation.
+    unawaited(_persistTabsNow());
   }
 
   Future<void> _persistTabsNow() {
@@ -1613,10 +1624,18 @@ class BrowserScreenState extends State<BrowserScreen>
       ],
     );
     _sessionTabs[signerNpub.trim()] = snapshot;
-    await SharedPreferencesAsync().setString(
-      key,
-      jsonEncode(snapshot.toJson()),
-    );
+    final previous = _tabWrites[key] ?? Future<void>.value();
+    final writing = previous
+        .then((_) => SharedPreferencesAsync().setString(
+              key,
+              jsonEncode(snapshot.toJson()),
+            ))
+        .catchError((Object _) {
+      // Retain the in-memory recovery copy if platform storage is unavailable.
+    });
+    _tabWrites[key] = writing;
+    await writing;
+    if (identical(_tabWrites[key], writing)) _tabWrites.remove(key);
   }
 
   String? _tabsStorageKey(String signerNpub) {
@@ -2548,6 +2567,7 @@ class BrowserScreenState extends State<BrowserScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) unawaited(_persistTabsNow());
     for (final tab in _tabs) {
       _recordHostDiagnostic(tab, 'lifecycle');
       if (state != AppLifecycleState.resumed) {
@@ -5087,6 +5107,64 @@ class _BrowserTabsSnapshot {
   final int version;
   final int activeIndex;
   final List<_BrowserTabSnapshot> tabs;
+
+  static _BrowserTabsSnapshot? decode(String? raw) {
+    if (raw == null || raw.length > 4 * 1024 * 1024) return null;
+    try {
+      final data = jsonDecode(raw);
+      if (data is! Map<String, dynamic> ||
+          data['version'] != 3 ||
+          data['active_index'] is! int ||
+          data['tabs'] is! List) {
+        return null;
+      }
+      final entries = data['tabs'] as List;
+      if (entries.isEmpty || entries.length > 500) return null;
+      final tabs = <_BrowserTabSnapshot>[];
+      for (final entry in entries) {
+        if (entry is! Map<String, dynamic> || entry['is_home'] is! bool) {
+          return null;
+        }
+        final home = entry['is_home'] as bool;
+        final url = entry['url'];
+        if (!home) {
+          if (url is! String || url.length > 65536) return null;
+          final uri = Uri.tryParse(url);
+          if (uri == null ||
+              !{'http', 'https'}.contains(uri.scheme) ||
+              uri.host.isEmpty ||
+              uri.userInfo.isNotEmpty) {
+            return null;
+          }
+        }
+        for (final field in [
+          'title',
+          'prefix',
+          'colour',
+          'diagnostics_tab_key'
+        ]) {
+          if (entry[field] != null && entry[field] is! String) return null;
+        }
+        // A retired packaged app is a home slot, never a loopback relaunch.
+        final restoreHome =
+            home || (url is String && isRetiredBundledAppUrl(url));
+        tabs.add(_BrowserTabSnapshot(
+          title: entry['title'] as String?,
+          url: restoreHome ? null : url as String,
+          isHome: restoreHome,
+          prefix: entry['prefix'] as String? ?? '',
+          colour: entry['colour'] as String?,
+          diagnosticsTabKey: entry['diagnostics_tab_key'] as String?,
+        ));
+      }
+      return _BrowserTabsSnapshot(
+          version: 3,
+          activeIndex: (data['active_index'] as int).clamp(0, tabs.length - 1),
+          tabs: tabs);
+    } catch (_) {
+      return null;
+    }
+  }
 
   Map<String, dynamic> toJson() {
     return {

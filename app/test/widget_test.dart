@@ -755,19 +755,25 @@ void main() {
               as Map;
       expect(cleared['tabs'][0].containsKey('prefix'), isFalse);
       expect(cleared['tabs'][0].containsKey('colour'), isFalse);
+      await editPrefix('WORK');
+      await menu();
+      await tester
+          .tap(find.widgetWithText(CheckedPopupMenuItem<String>, 'Blue'));
+      await tester.pumpAndSettle();
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
       installFakeWebViewPlatform();
       await tester.pumpWidget(browser());
       await tester.pumpAndSettle();
       expect(find.text('New Tab'), findsOneWidget);
-      expect(find.text('WORK: app.example'), findsNothing);
-      expect(fakeLoadedRequestUrls, isEmpty);
+      expect(find.text('WORK: app.example'), findsOneWidget);
+      expect(fakeLoadedRequestUrls, ['https://app.example/']);
+      expect(activeBrowserStackIndex(tester), 1);
       final retained =
           jsonDecode((await SharedPreferencesAsync().getString(storageKey))!)
               as Map;
-      // Startup doesn't restore the tab prefix; the saved record remains readable.
-      expect(retained['tabs'], isNotEmpty);
+      expect(retained['tabs'][0]['prefix'], 'WORK');
+      expect(retained['tabs'][0]['colour'], 'Blue');
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
     } finally {
@@ -965,7 +971,7 @@ void main() {
   });
 
   testWidgets(
-      'Wingman shell uses startup selection on relaunch instead of disk tabs',
+      'Wingman shell restores saved windows and active home tab on relaunch',
       (tester) async {
     final config = AppConfig.defaults().copyWith(
       deviceSecret: 'nsec-placeholder',
@@ -1016,9 +1022,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('New Tab'), findsOneWidget);
-    expect(find.text('service-3.example.com'), findsNothing);
-    expect(fakeLoadedRequestUrls, isEmpty);
+    expect(find.text('New Tab'), findsNWidgets(2));
+    expect(find.text('service-3.example.com'), findsOneWidget);
+    expect(activeBrowserStackIndex(tester), 2);
+    expect(fakeLoadedRequestUrls, ['https://service-3.example.com']);
     expect(find.byTooltip('Back'), findsNothing);
   });
 
