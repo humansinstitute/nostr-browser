@@ -1,7 +1,18 @@
 import { test, expect } from "bun:test";
-import { validate, signChecked, verifyProof, eventSet, historyMax, completeHistory, PACKAGE, PUBLISHER, BLOSSOM } from "./zapstore_broker.ts";
+import { validate, signChecked, verifyProof, eventSet, historyMax, completeHistory, proofRejectionContinuation, PACKAGE, PUBLISHER, BLOSSOM } from "./zapstore_broker.ts";
 const cert="a".repeat(64);
 const asset=()=>({kind:3063,pubkey:PUBLISHER,created_at:1,content:"",tags:[["i",PACKAGE],["x","b".repeat(64)],["apk_certificate_hash",cert],["version_code","12"],["url",BLOSSOM+"/"+"b".repeat(64)]]});
+test("known proof rejection continues only unsent release and rejected proof with original IDs",()=>{
+  const state={owner:"worker",stage:"delivery_pending",asset_host:"github",apk_sha256:"b".repeat(64),version_code:12,version_name:"nightly",certificate_sha256:cert};
+  const a={...asset(),id:"asset",tags:[...asset().tags,["version","nightly"]]};
+  const release={...a,kind:30063,id:"release",tags:[["version","nightly"],["e","asset"]]};
+  const app={...a,kind:32267,id:"app"};const proof={...a,kind:30509,id:"proof"};
+  const events=[proof,a,release,app];
+  const log="Relay rejected: kind 30509: no APK to check this certificate against. A claim alone is accepted only for a listed app; for a new app, send the proof with its first release\n";
+  expect(proofRejectionContinuation(state,"worker",log,events,[]).map(e=>e.id)).toEqual(["asset","release","proof"]);
+  expect(proofRejectionContinuation(state,"worker",log,events,[app]).map(e=>e.id)).toEqual(["asset","release","proof"]);
+  for(const [s,owner,l,found] of [[state,"other",log,[]],[{...state,stage:"uploaded"},"worker",log,[]],[state,"worker","timeout",[]],[state,"worker",log,[a]],[{...state,apk_sha256:"wrong"},"worker",log,[]]] as const)expect(()=>proofRejectionContinuation(s,owner,l,events,[...found])).toThrow();
+});
 test("rejects stable APK, foreign publisher, certificate and host",()=>{
   for(const e of [{...asset(),pubkey:"b".repeat(64)},{...asset(),tags:asset().tags.map(t=>t[0]==="i"?["i","com.wingmanbefree.wingman_app"]:t)},{...asset(),tags:asset().tags.map(t=>t[0]==="apk_certificate_hash"?[t[0],"b".repeat(64)]:t)},{...asset(),tags:asset().tags.map(t=>t[0]==="url"?["url","https://evil.example/file"]:t)}])expect(()=>validate(e,cert)).toThrow();
 });

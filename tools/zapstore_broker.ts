@@ -31,6 +31,19 @@ export function eventSet(events:Event[]) {
   if(references.length!==1 || references[0][1]!==asset.id)throw Error("Release asset reference does not match unsigned asset");
   return {asset,release,app};
 }
+export function proofRejectionContinuation(state:any, owner:string|undefined, log:string, events:Event[], found:Event[]) {
+  if(!owner || state.owner!==owner || state.stage!=="delivery_pending" || state.asset_host!=="github")throw Error("Exact pending release owner required");
+  if(log.trim()!=="Relay rejected: kind 30509: no APK to check this certificate against. A claim alone is accepted only for a listed app; for a new app, send the proof with its first release")throw Error("Explicit known proof rejection required; uncertain delivery is readback only");
+  if(events.length!==4 || new Set(events.map(e=>e.kind)).size!==4 || ![32267,3063,30063,30509].every(k=>events.some(e=>e.kind===k)))throw Error("Exact retained event set required");
+  const {asset,release}=eventSet(events.filter(e=>e.kind!==30509));
+  if(tag(asset,"x")!==state.apk_sha256 || tag(asset,"version_code")!==String(state.version_code) || tag(asset,"version")!==state.version_name || tag(asset,"apk_certificate_hash")!==state.certificate_sha256 || tag(release,"version")!==state.version_name)throw Error("Retained artifact identity differs");
+  // The old sequential publisher received OK for the app, then an explicit
+  // rejection for the proof. Asset and release were never attempted. Never
+  // resend the accepted app or continue if any later event is already served.
+  const app=events.find(e=>e.kind===32267)!;
+  if(found.some(e=>e.id!==app.id))throw Error("Unexpected delivered event; reconcile exact readback");
+  return [3063,30063,30509].map(k=>events.find(e=>e.kind===k)!);
+}
 export function historyMax(events:Event[], verifyEvent:any) {
   if(events.some(e=>e.tags.filter(t=>t[0]==="i").length!==1||e.tags.filter(t=>t[0]==="version_code").length!==1||!verifyEvent(e)||e.kind!==3063||e.pubkey!==PUBLISHER||tag(e,"i")!==PACKAGE||!/^[1-9]\d*$/.test(tag(e,"version_code")??"")||!Number.isSafeInteger(Number(tag(e,"version_code")))))throw Error("Invalid or incomplete relay version history");
   return Math.max(0,...events.map(e=>Number(tag(e,"version_code"))));
@@ -132,11 +145,22 @@ async function main() {
     if(found.length!==1||!verifyEvent(found[0])||found[0].id!==amended.id)throw Error("Listing amendment delivery uncertain");
     await Bun.write(run+"/listing-amended-readback.json",JSON.stringify(found,null,2));console.log(JSON.stringify({amendedRelease:amended.id,url:tag(amended,"url")}));return;
   }
-  if(action==="publish" || action==="publish-public" || action==="readback") {
+  if(action==="publish" || action==="publish-public" || action==="continue-rejected-proof" || action==="readback") {
     const events=[await Bun.file(run+"/proof-signed.json").json(),...await Bun.file(run+(action==="publish"?"/signed.json":"/signed-public-assets.json")).json()] as Event[];
     if(action==="readback" && await Bun.file(run+"/signed-listing-amendment.json").exists()){const amendment=await Bun.file(run+"/signed-listing-amendment.json").json();events.splice(events.findIndex(e=>e.kind===30063),1,amendment);}
-    const ordered=[events.find(e=>e.kind===32267)!,events.find(e=>e.kind===30509)!,events.find(e=>e.kind===3063)!,events.find(e=>e.kind===30063)!];
-    for(const e of ordered){validate(e,cert);if(!verifyEvent(e))throw Error("Signature failed");if(action.startsWith("publish"))await exchange([["EVENT",e]],null,e);}
+    for(const e of events){validate(e,cert);if(!verifyEvent(e))throw Error("Signature failed");}
+    let ordered=[32267,3063,30063,30509].map(k=>events.find(e=>e.kind===k)!);
+    if(action==="continue-rejected-proof") {
+      const state=await Bun.file(run+"/state.json").json();
+      const found=await exchange([["REQ","before-continuation",{ids:events.map(e=>e.id)}]],null);
+      if(found.some(e=>!verifyEvent(e)))throw Error("Invalid readback signature");
+      ordered=proofRejectionContinuation(state,process.env.SESSION_ID,await Bun.file(run+"/relay-publish-public.log").text(),events,found);
+      verifyProof(events.find(e=>e.kind===30509)!,new Uint8Array(await Bun.file(run+"/certificate.der").arrayBuffer()));
+      if(Number(tag(events.find(e=>e.kind===30509)!,"expiry"))<=Math.floor(Date.now()/1000))throw Error("Expired retained proof");
+      const {writeFile}=await import("node:fs/promises");
+      await writeFile(run+"/proof-rejection-continuation.json",JSON.stringify({owner:state.owner,expected:events.map(e=>e.id),found:found.map(e=>e.id),send:ordered.map(e=>e.id)},null,2),{flag:"wx",mode:0o600});
+    }
+    for(const e of ordered){if(action.startsWith("publish")||action==="continue-rejected-proof")await exchange([["EVENT",e]],null,e);}
     const ids=events.map(e=>e.id);const found=await exchange([["REQ","readback",{ids}]],null);
     if(ids.some(id=>!found.some(e=>e.id===id&&verifyEvent(e))))throw Error("Published event readback incomplete");
     await Bun.write(run+(action==="readback"?`/relay-readback-${Date.now()}.json`:"/relay-readback.json"),JSON.stringify(found,null,2));console.log(JSON.stringify({accepted:ids,listing:`https://zapstore.dev/apps/${PACKAGE}`}));return;

@@ -10,6 +10,13 @@ catalog and repository ownership proof live at
 https://github.com/OtherStuffAI/wingman-nightly; the catalog's root `zapstore.yaml`
 pins the configured publisher's publisher. `zapstore-nightly.yaml` is the reusable source configuration.
 
+The current public catalog rejects the `nightly` release channel and accepts
+only `main`. The established configuration therefore stops at this explicit
+relay gate. A catalog-channel migration needs a reviewed metadata change and
+exact reconciliation of any pending signed release; changing the APK package,
+certificate or version is not a workaround. Public GitHub APK availability alone
+does not establish Zapstore listing availability.
+
 ## Release procedure
 
 Use `tools/nightly_zapstore.py` under an authorized publisher broker session. Provision
@@ -59,8 +66,10 @@ future APK updates require the same certificate.
    authorized GitHub release, downloads/verifies that icon and the public APK,
    and broker-signs events with exact GitHub asset URLs. Then run `publish-public`
    once. It records `delivery_pending` before relay mutation, publishes the app
-   event first so repository proof can whitelist the publisher, then the proof,
-   asset and release events to `wss://relay.zapstore.dev`, and reads every event back.
+   event first so repository proof can whitelist the publisher, then the asset,
+   release and certificate-proof events to `wss://relay.zapstore.dev`, and reads every event back.
+   Current relay onboarding needs the release before it can check the certificate
+   proof against the APK, matching the current official zsp publisher order.
    GitHub release hosting is an independently authorized asset path supported by
    NIP-82; it performs no CDN authentication or policy changes. The optional
    `publish` action uses broker-authorized Blossom upload only when separately
@@ -80,6 +89,16 @@ future APK updates require the same certificate.
    ledger state, reuse a version code, or infer success from upload receipts.
    Reporting is independent for TestFlight and Android. Keep pending state until
    exact delivery and reporting are reconciled by an authorized operator.
+
+   A legacy proof-first attempt that explicitly received the relay's exact
+   “no APK to check this certificate against” rejection has a narrow recovery:
+   `bun tools/zapstore_broker.ts continue-rejected-proof <retained-run> <certificate-hash>`.
+   This requires the reservation owner, unchanged pending GitHub-backed artifact,
+   original signed IDs, exact rejection log and fresh signed-event readback.
+   It skips the previously accepted app, sends the previously unattempted asset
+   and release, then the rejected proof. An exclusive intent journal prevents
+   another continuation. Any uncertain or different error remains readback-only.
+   Finish with the normal nightly `readback` command; never edit the ledger stage.
 
 Run-specific evidence and state are ignored under `tmp/docs/handoffs/`.
 Use `status` for read-only inspection. A duplicate day, active prior reservation,
