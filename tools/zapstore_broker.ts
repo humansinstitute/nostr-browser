@@ -133,7 +133,7 @@ async function main() {
   }
   if(action==="amend-listing") {
     const events=await Bun.file(run+"/signed-public-assets.json").json() as Event[];
-    const asset=events.find(e=>e.kind===3063)!;const release=events.find(e=>e.kind===30063)!;
+    const asset=events.find(e=>e.kind===3063)!;const release=await Bun.file(run+"/signed-catalog-main.json").exists()?await Bun.file(run+"/signed-catalog-main.json").json():events.find(e=>e.kind===30063)!;
     if(await Bun.file(run+"/signed-listing-amendment.json").exists())throw Error("Listing amendment already attempted; reconcile exact signed ID, never repeat");
     const prior=await exchange([["REQ","prior-release",{ids:[release.id!,asset.id!]}]],null);
     if(prior.length!==2 || prior.some(e=>!verifyEvent(e)))throw Error("Original accepted release/asset readback required before amendment");
@@ -173,8 +173,8 @@ async function main() {
   }
   if(action==="publish" || action==="publish-public" || action==="continue-rejected-proof" || action==="readback") {
     const events=[await Bun.file(run+"/proof-signed.json").json(),...await Bun.file(run+(action==="publish"?"/signed.json":"/signed-public-assets.json")).json()] as Event[];
-    if(action==="readback" && await Bun.file(run+"/signed-listing-amendment.json").exists()){const amendment=await Bun.file(run+"/signed-listing-amendment.json").json();events.splice(events.findIndex(e=>e.kind===30063),1,amendment);}
     if(action==="readback" && await Bun.file(run+"/signed-catalog-main.json").exists()){const migrated=await Bun.file(run+"/signed-catalog-main.json").json();events.splice(events.findIndex(e=>e.kind===30063),1,migrated);}
+    if(action==="readback" && await Bun.file(run+"/signed-listing-amendment.json").exists()){const amendment=await Bun.file(run+"/signed-listing-amendment.json").json();events.splice(events.findIndex(e=>e.kind===30063),1,amendment);}
     for(const e of events){validate(e,cert);if(!verifyEvent(e))throw Error("Signature failed");}
     let ordered=[32267,3063,30063,30509].map(k=>events.find(e=>e.kind===k)!);
     if(action==="continue-rejected-proof") {
