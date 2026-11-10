@@ -384,7 +384,7 @@ def main():
                 config=(ROOT/'zapstore-nightly.yaml').read_text().replace('./app/build/app/outputs/flutter-apk/app-release.apk',str(run/'app-release.apk')).replace('./docs/deploy/nightly-zapstore-notes.md',str(run/'notes.md')).replace('pubkey: ""', 'pubkey: '+NPUB)
                 (run/'zapstore.yaml').write_text(config)
                 with (run/'unsigned.jsonl').open('x') as out,(run/'upload-manifest.txt').open('x') as err:
-                    subprocess.run([str(ZSP),'--json','publish',str(run/'zapstore.yaml'),'--offline','--quiet','--no-compress','--channel','nightly','--commit',s['source_commit']],env=env,stdout=out,stderr=err,check=True)
+                    subprocess.run([str(ZSP),'--json','publish',str(run/'zapstore.yaml'),'--offline','--quiet','--no-compress','--channel','main','--commit',s['source_commit']],env=env,stdout=out,stderr=err,check=True)
                 logged(['bun',ROOT/'tools/zapstore_broker.ts','sign',run,s['certificate_sha256']],ROOT,'broker-sign')
                 # Broker chooses current timestamp. Generate a fresh keystore proof
                 # and only accept exact timestamp equality; no event is published here.

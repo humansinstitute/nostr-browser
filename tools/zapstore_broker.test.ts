@@ -2,6 +2,11 @@ import { test, expect } from "bun:test";
 import { validate, signChecked, verifyProof, eventSet, historyMax, completeHistory, proofRejectionContinuation, PACKAGE, PUBLISHER, BLOSSOM } from "./zapstore_broker.ts";
 const cert="a".repeat(64);
 const asset=()=>({kind:3063,pubkey:PUBLISHER,created_at:1,content:"",tags:[["i",PACKAGE],["x","b".repeat(64)],["apk_certificate_hash",cert],["version_code","12"],["url",BLOSSOM+"/"+"b".repeat(64)]]});
+test("catalog main metadata remains restricted to exact nightly package and version",()=>{
+  const e={...asset(),kind:30063,tags:[["i",PACKAGE],["version","nightly"],["d",PACKAGE+"@nightly"],["c","main"]]};
+  expect(()=>validate(e,cert)).not.toThrow();
+  for(const tags of [e.tags.map(t=>t[0]==="i"?["i","com.wingmanbefree.wingman_app"]:t),e.tags.map(t=>t[0]==="c"?["c","beta"]:t),e.tags.map(t=>t[0]==="d"?["d","wrong"]:t)])expect(()=>validate({...e,tags},cert)).toThrow();
+});
 test("known proof rejection continues only unsent release and rejected proof with original IDs",()=>{
   const state={owner:"worker",stage:"delivery_pending",asset_host:"github",apk_sha256:"b".repeat(64),version_code:12,version_name:"nightly",certificate_sha256:cert};
   const a={...asset(),id:"asset",tags:[...asset().tags,["version","nightly"]]};

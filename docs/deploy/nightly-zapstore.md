@@ -10,12 +10,10 @@ catalog and repository ownership proof live at
 https://github.com/OtherStuffAI/wingman-nightly; the catalog's root `zapstore.yaml`
 pins the configured publisher's publisher. `zapstore-nightly.yaml` is the reusable source configuration.
 
-The current public catalog rejects the `nightly` release channel and accepts
-only `main`. The established configuration therefore stops at this explicit
-relay gate. A catalog-channel migration needs a reviewed metadata change and
-exact reconciliation of any pending signed release; changing the APK package,
-certificate or version is not a workaround. Public GitHub APK availability alone
-does not establish Zapstore listing availability.
+The public catalog accepts only the `main` release metadata channel. The nightly
+lane uses `c=main` while retaining its separate nightly Android package, signing
+certificate and version names. This does not publish or replace the stable app.
+Public GitHub APK availability alone does not establish Zapstore availability.
 
 ## Release procedure
 
@@ -47,7 +45,7 @@ future APK updates require the same certificate.
    Run `prepare`. It verifies the APK signature, exact package/version/name,
    certificate, ARM64 contents, FIPS library/service and canonical extracted icon.
    zsp v0.4.17 emits JSONL with `SIGN_WITH` set to the configured publisher's **public** npub,
-   `--offline --no-compress --channel nightly --commit <commit>`.
+   `--offline --no-compress --channel main --commit <commit>`.
    No publisher signing or upload occurs inside zsp. The adapter signs kind 3063
    first, rewrites kind 30063's asset reference to the actual broker-signed ID,
    then signs kinds 30063 and 32267. It rejects stable packages, changed identity,
@@ -99,6 +97,15 @@ future APK updates require the same certificate.
    and release, then the rejected proof. An exclusive intent journal prevents
    another continuation. Any uncertain or different error remains readback-only.
    Finish with the normal nightly `readback` command; never edit the ledger stage.
+
+   After that legacy continuation, an explicit catalog rejection of `nightly`
+   metadata can use the reviewed `migrate-catalog-main` broker action with the same
+   run and certificate arguments. It requires an exact retained channel-rejection
+   log (`catalog-channel-rejection.log`), unchanged signed artifact identities,
+   fresh readback and the original owner. It preserves the original signed events,
+   signs only corrected release metadata and sends it before the retained proof.
+   An exclusive migration intent prevents repeats; `readback` selects the corrected
+   signed release and still requires all public availability gates.
 
 Run-specific evidence and state are ignored under `tmp/docs/handoffs/`.
 Use `status` for read-only inspection. A duplicate day, active prior reservation,

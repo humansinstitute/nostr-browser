@@ -19,7 +19,7 @@ export function validate(e:Event, cert:string) {
   } else {
     if(tag(e,e.kind===32267?"d":"i")!==PACKAGE) throw Error("Stable or foreign package rejected");
     if(e.kind===32267 && (tag(e,"name")!=="Nostr Browser" || tag(e,"repository")!=="https://github.com/OtherStuffAI/wingman-nightly")) throw Error("Wrong app metadata");
-    if(e.kind===30063 && (tag(e,"c")!=="nightly" || tag(e,"d")!==`${PACKAGE}@${tag(e,"version")}`)) throw Error("Wrong release channel");
+    if(e.kind===30063 && (!["nightly","main"].includes(tag(e,"c")??"") || tag(e,"d")!==`${PACKAGE}@${tag(e,"version")}`)) throw Error("Wrong release channel");
     if(e.kind===3063 && (tag(e,"apk_certificate_hash")!==cert || !/^[1-9]\d*$/.test(tag(e,"version_code")??"") || !/^[a-f0-9]{64}$/.test(tag(e,"x")??""))) throw Error("Invalid asset identity");
   }
   for(const t of e.tags.filter(t=>["url","icon","image"].includes(t[0]))) if(!(e.kind===30063 && new RegExp("^https://cdn\\.zapstore\\.dev/[a-f0-9]{64}\\?redirect=true$").test(t[1])) && !(t[1].startsWith(BLOSSOM+"/") && /^[a-f0-9]{64}$/.test(t[1].slice(BLOSSOM.length+1))) && !/^https:\/\/github\.com\/OtherStuffAI\/wingman-nightly\/releases\/download\/nightly-\d{4}-\d{2}-\d{2}-[1-9]\d*\/(app-release\.apk|icon\.png)$/.test(t[1])) throw Error("Unexpected asset host or hash");
@@ -145,9 +145,36 @@ async function main() {
     if(found.length!==1||!verifyEvent(found[0])||found[0].id!==amended.id)throw Error("Listing amendment delivery uncertain");
     await Bun.write(run+"/listing-amended-readback.json",JSON.stringify(found,null,2));console.log(JSON.stringify({amendedRelease:amended.id,url:tag(amended,"url")}));return;
   }
+  if(action==="migrate-catalog-main") {
+    const state=await Bun.file(run+"/state.json").json();
+    const events=[await Bun.file(run+"/proof-signed.json").json(),...await Bun.file(run+"/signed-public-assets.json").json()] as Event[];
+    for(const e of events){validate(e,cert);if(!verifyEvent(e))throw Error("Signature failed");}
+    const found=await exchange([["REQ","before-channel-migration",{ids:events.map(e=>e.id)}]],null);
+    if(found.some(e=>!verifyEvent(e)))throw Error("Invalid readback signature");
+    proofRejectionContinuation(state,process.env.SESSION_ID,await Bun.file(run+"/relay-publish-public.log").text(),events,found);
+    if((await Bun.file(run+"/catalog-channel-rejection.log").text()).trim()!== 'Relay rejected: channel "nightly" is not accepted: the catalog relay lists only the main channel')throw Error("Explicit catalog channel rejection required");
+    const intent=await Bun.file(run+"/proof-rejection-continuation.json").json();
+    if(JSON.stringify(intent.expected)!==JSON.stringify(events.map(e=>e.id)))throw Error("Continuation event identities differ");
+    const proof=events.find(e=>e.kind===30509)!;
+    verifyProof(proof,new Uint8Array(await Bun.file(run+"/certificate.der").arrayBuffer()));
+    if(Number(tag(proof,"expiry"))<=Math.floor(Date.now()/1000))throw Error("Expired retained proof");
+    const original=events.find(e=>e.kind===30063)!;
+    if(tag(original,"c")!=="nightly")throw Error("Original rejected nightly release required");
+    const {writeFile}=await import("node:fs/promises");
+    // Exclusive journal precedes signing and relay mutation. Any interruption
+    // after this boundary requires readback, never rerunning this migration.
+    await writeFile(run+"/catalog-main-migration-intent.json",JSON.stringify({owner:state.owner,original:events.map(e=>e.id),found:found.map(e=>e.id)},null,2),{flag:"wx",mode:0o600});
+    const migrated=await signChecked({...original,tags:original.tags.map(t=>t[0]==="c"?["c","main"]:t)},cert,callCapabilityBroker,verifyEvent);
+    await writeFile(run+"/signed-catalog-main.json",JSON.stringify(migrated,null,2),{flag:"wx",mode:0o600});
+    // App and asset received OK in the prior bounded attempts; only the
+    // intentionally corrected release and never-retried proof are sent here.
+    for(const e of [migrated,proof])await exchange([["EVENT",e]],null,e);
+    console.log(JSON.stringify({migratedRelease:migrated.id,previousRelease:original.id,channel:"main"}));return;
+  }
   if(action==="publish" || action==="publish-public" || action==="continue-rejected-proof" || action==="readback") {
     const events=[await Bun.file(run+"/proof-signed.json").json(),...await Bun.file(run+(action==="publish"?"/signed.json":"/signed-public-assets.json")).json()] as Event[];
     if(action==="readback" && await Bun.file(run+"/signed-listing-amendment.json").exists()){const amendment=await Bun.file(run+"/signed-listing-amendment.json").json();events.splice(events.findIndex(e=>e.kind===30063),1,amendment);}
+    if(action==="readback" && await Bun.file(run+"/signed-catalog-main.json").exists()){const migrated=await Bun.file(run+"/signed-catalog-main.json").json();events.splice(events.findIndex(e=>e.kind===30063),1,migrated);}
     for(const e of events){validate(e,cert);if(!verifyEvent(e))throw Error("Signature failed");}
     let ordered=[32267,3063,30063,30509].map(k=>events.find(e=>e.kind===k)!);
     if(action==="continue-rejected-proof") {
