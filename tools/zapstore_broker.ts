@@ -1,6 +1,7 @@
 /** Narrow external signer for zsp v0.4.17 JSONL. No private Nostr key access. */
 import { createHash, X509Certificate, verify as verifyCrypto } from "node:crypto";
 import { resolve } from "node:path";
+import { assertLegacyPublisherAllowed } from "./certificate-owner-guard";
 
 export const PACKAGE = "com.wingmanbefree.wingman_app.nightly";
 export const PUBLISHER = process.env.WMAPP_ZAPSTORE_PUBLISHER_HEX ?? "";
@@ -97,12 +98,17 @@ async function main() {
     console.log(JSON.stringify({maxVersionCode:historyMax(events,verifyEvent),historyCount:events.length,historyComplete:true,versionCodes:events.map(e=>Number(tag(e,"version_code"))),releases:events.map(e=>({versionCode:Number(tag(e,"version_code")),version:tag(e,"version"),eventId:e.id,createdAt:e.created_at,apkSha256:tag(e,"x"),certificateSha256:tag(e,"apk_certificate_hash")})),publisher:PUBLISHER,package:PACKAGE}));return;
   }
   if((await readCapabilityIdentity()).botPubkeyHex!==PUBLISHER)throw Error("Publisher broker identity required");
+  const ownerCheck=()=>assertLegacyPublisherAllowed(cert,PUBLISHER,verifyEvent);
+  const guardedSign=async(e:Event)=>{await ownerCheck();return signChecked(e,cert,callCapabilityBroker,verifyEvent);};
+  const guardedPublish=async(e:Event)=>{await ownerCheck();return exchange([["EVENT",e]],null,e);};
+  if(action==="owner-check"){console.log(JSON.stringify(await ownerCheck()));return;}
+  if(["sign","sign-public","proof","amend-listing","migrate-catalog-main","publish","publish-public","continue-rejected-proof"].includes(action))await ownerCheck();
   if(action==="sign") {
     const unsigned=(await Bun.file(run+"/unsigned.jsonl").text()).trim().split("\n").map(x=>JSON.parse(x)) as Event[];
     const {asset,release,app}=eventSet(unsigned);
-    const signedAsset=await signChecked(asset,cert,callCapabilityBroker,verifyEvent);
+    const signedAsset=await guardedSign(asset);
     release.tags=release.tags.map(t=>t[0]==="e"?["e",signedAsset.id!,RELAY]:t);
-    const signed=[signedAsset,await signChecked(release,cert,callCapabilityBroker,verifyEvent),await signChecked(app,cert,callCapabilityBroker,verifyEvent)];
+    const signed=[signedAsset,await guardedSign(release),await guardedSign(app)];
     await Bun.write(run+"/signed.json",JSON.stringify(signed,null,2));return;
   }
   if(action==="sign-public") {
@@ -113,15 +119,15 @@ async function main() {
     const {asset,release,app}=eventSet(unsigned);
     asset.tags=asset.tags.filter(t=>t[0]!=="url");asset.tags.push(["url",base+"/app-release.apk"]);
     app.tags=app.tags.map(t=>t[0]==="icon"?["icon",base+"/icon.png"]:t);
-    const signedAsset=await signChecked(asset,cert,callCapabilityBroker,verifyEvent);
+    const signedAsset=await guardedSign(asset);
     release.tags=release.tags.map(t=>t[0]==="e"?["e",signedAsset.id!,RELAY]:t);
     release.tags.push(["url",`${BLOSSOM}/${tag(asset,"x")}?redirect=true`]);
-    const events=[signedAsset,await signChecked(release,cert,callCapabilityBroker,verifyEvent),await signChecked(app,cert,callCapabilityBroker,verifyEvent)];
+    const events=[signedAsset,await guardedSign(release),await guardedSign(app)];
     await Bun.write(run+"/signed-public-assets.json",JSON.stringify(events,null,2));return;
   }
   if(action==="proof") {
     const proof=await Bun.file(run+"/proof-unsigned.json").json();
-    const signed=await signChecked(proof,cert,callCapabilityBroker,verifyEvent);
+    const signed=await guardedSign(proof);
     verifyProof(signed,new Uint8Array(await Bun.file(run+"/certificate.der").arrayBuffer()));
     await Bun.write(run+"/proof-signed.json",JSON.stringify(signed));return;
   }
@@ -138,9 +144,9 @@ async function main() {
     const prior=await exchange([["REQ","prior-release",{ids:[release.id!,asset.id!]}]],null);
     if(prior.length!==2 || prior.some(e=>!verifyEvent(e)))throw Error("Original accepted release/asset readback required before amendment");
     release.tags=release.tags.filter(t=>t[0]!=="url");release.tags.push(["url",`${BLOSSOM}/${tag(asset,"x")}?redirect=true`]);
-    const amended=await signChecked(release,cert,callCapabilityBroker,verifyEvent);
+    const amended=await guardedSign(release);
     await Bun.write(run+"/signed-listing-amendment.json",JSON.stringify(amended,null,2));
-    await exchange([["EVENT",amended]],null,amended);
+    await guardedPublish(amended);
     const found=await exchange([["REQ","amended-release",{ids:[amended.id!]}]],null);
     if(found.length!==1||!verifyEvent(found[0])||found[0].id!==amended.id)throw Error("Listing amendment delivery uncertain");
     await Bun.write(run+"/listing-amended-readback.json",JSON.stringify(found,null,2));console.log(JSON.stringify({amendedRelease:amended.id,url:tag(amended,"url")}));return;
@@ -164,11 +170,11 @@ async function main() {
     // Exclusive journal precedes signing and relay mutation. Any interruption
     // after this boundary requires readback, never rerunning this migration.
     await writeFile(run+"/catalog-main-migration-intent.json",JSON.stringify({owner:state.owner,original:events.map(e=>e.id),found:found.map(e=>e.id)},null,2),{flag:"wx",mode:0o600});
-    const migrated=await signChecked({...original,tags:original.tags.map(t=>t[0]==="c"?["c","main"]:t)},cert,callCapabilityBroker,verifyEvent);
+    const migrated=await guardedSign({...original,tags:original.tags.map(t=>t[0]==="c"?["c","main"]:t)});
     await writeFile(run+"/signed-catalog-main.json",JSON.stringify(migrated,null,2),{flag:"wx",mode:0o600});
     // App and asset received OK in the prior bounded attempts; only the
     // intentionally corrected release and never-retried proof are sent here.
-    for(const e of [migrated,proof])await exchange([["EVENT",e]],null,e);
+    for(const e of [migrated,proof])await guardedPublish(e);
     console.log(JSON.stringify({migratedRelease:migrated.id,previousRelease:original.id,channel:"main"}));return;
   }
   if(action==="publish" || action==="publish-public" || action==="continue-rejected-proof" || action==="readback") {
@@ -187,7 +193,7 @@ async function main() {
       const {writeFile}=await import("node:fs/promises");
       await writeFile(run+"/proof-rejection-continuation.json",JSON.stringify({owner:state.owner,expected:events.map(e=>e.id),found:found.map(e=>e.id),send:ordered.map(e=>e.id)},null,2),{flag:"wx",mode:0o600});
     }
-    for(const e of ordered){if(action.startsWith("publish")||action==="continue-rejected-proof")await exchange([["EVENT",e]],null,e);}
+    for(const e of ordered){if(action.startsWith("publish")||action==="continue-rejected-proof")await guardedPublish(e);}
     const ids=events.map(e=>e.id);const found=await exchange([["REQ","readback",{ids}]],null);
     if(ids.some(id=>!found.some(e=>e.id===id&&verifyEvent(e))))throw Error("Published event readback incomplete");
     await Bun.write(run+(action==="readback"?`/relay-readback-${Date.now()}.json`:"/relay-readback.json"),JSON.stringify(found,null,2));console.log(JSON.stringify({accepted:ids,listing:`https://zapstore.dev/apps/${PACKAGE}`}));return;

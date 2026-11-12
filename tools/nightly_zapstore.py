@@ -361,6 +361,7 @@ def main():
                     raise
                 logged([wm/'app/android/gradlew','testDebugUnitTest'],wm/'app/android','resume-android-unit-tests');update('built')
             elif a.action=='prepare':
+                command(['bun', ROOT/'tools/zapstore_broker.ts', 'owner-check', run, CERTIFICATE_SHA256], env=env)
                 if s['stage']!='built': raise ValueError('Preparation requires built state.')
                 private_key_reference(KEYSTORE);private_key_reference(PASSWORD)
                 if not re.fullmatch(r'npub1[a-z0-9]{58}', NPUB): raise ValueError('Verified WMAPP_ZAPSTORE_PUBLISHER_NPUB required.')
