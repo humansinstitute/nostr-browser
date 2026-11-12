@@ -8,5 +8,5 @@ description: >-
 tags: [nostr, productivity, tools]
 supported_nips: ["07", "98"]
 release_notes: ./docs/deploy/nightly-zapstore-notes.md
-# Configure the verified publisher in a private manifest before publication.
-pubkey: ""
+# Ownership transferred to Pete; publish releases through the enrolled AP Vault.
+pubkey: npub1jss47s4fvv6usl7tn6yp5zamv2u60923ncgfea0e6thkza5p7c3q0afmzy

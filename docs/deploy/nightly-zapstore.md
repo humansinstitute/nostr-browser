@@ -8,16 +8,24 @@ stable WMAPP and has its own private persistent Android signing keystore.
 Stable package, publisher and `zapstore.yaml` remain unchanged. Nightly's public
 catalog and repository ownership proof live at
 https://github.com/OtherStuffAI/wingman-nightly; the catalog's root `zapstore.yaml`
-pins the configured publisher's publisher. `zapstore-nightly.yaml` is the reusable source configuration.
+pins the intended publisher. `zapstore-nightly.yaml` is the reusable source configuration.
 
 The public catalog accepts only the `main` release metadata channel. The nightly
 lane uses `c=main` while retaining its separate nightly Android package, signing
 certificate and version names. This does not publish or replace the stable app.
 Public GitHub APK availability alone does not establish Zapstore availability.
 
-## Release procedure
+## Current publication path
 
-Use `tools/nightly_zapstore.py` under an authorized publisher broker session. Provision
+The nightly package is owned by Pete's Nostr identity, as pinned in `zapstore-nightly.yaml`; its Android package and certificate are unchanged. Future Zapstore releases use the enrolled native AP Vault through its `scripts/publish.ts` helper and `docs/PUBLISHING.md`. Verify status and the final public APK, prepare the application/asset/release triple, then sign, independently verify, publish and read back the exact reviewed events. The active owner certificate proof already exists: do not generate another C1 ownership proof on every release. Only a separately reviewed renewal or ownership change should replace it.
+
+The legacy Rick broker tools intentionally hold signing/publication after the transfer, including retained old proof events. Their Android build-only and readback actions remain available. The Zapstore scheduler is disabled; this documentation does not enable it or claim AP Vault nightly automation is integrated. Keep that job disabled until a separately validated AP Vault release integration is ready.
+
+## Legacy broker implementation (publishing held)
+
+The following describes the retained legacy tooling, not the current publication procedure. Never bypass its owner guard or change its publisher environment to imitate owner signing.
+
+`tools/nightly_zapstore.py` retains the build and readback implementation. Provision
 an owner-only PKCS12 Android keystore and owner-only password reference outside
 Git at `~/.config/wmapp/wingman-nightly-release.p12` and
 `~/.config/wmapp/wingman-nightly-release.password`, alias `wingman-nightly`.
@@ -25,7 +33,7 @@ These are Android credentials, separate from the Nostr identity. Never derive,
 export or provide a Nostr private key. Back up Android credentials privately;
 future APK updates require the same certificate.
 
-1. Two independent existing scheduler sessions start at 22:00 `Australia/Perth`.
+1. The legacy lane was designed for independent scheduler sessions at 22:00 `Australia/Perth`; Zapstore scheduling is currently disabled.
    This lane performs Android only; Apple claims, failure or compliance never
    gate it. Use the short process-owned lock only for source preparation and
    immutable snapshots, then release it before packaging/delivery.
