@@ -1,3 +1,4 @@
+import 'fake_nstack_discovery.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -496,7 +497,8 @@ void main() {
   testWidgets('clean launch renders a neutral browser signer new tab',
       (tester) async {
     await tester.pumpWidget(
-      const WingmanApp(useSignerVault: false),
+      WingmanApp(
+          selfIndexDiscovery: EmptyNStackDiscovery(), useSignerVault: false),
     );
     await tester.pump();
 
@@ -953,6 +955,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ShellHome(
+          selfIndexDiscovery: EmptyNStackDiscovery(),
           config: AppConfig.defaults().copyWith(
             deviceSecret: 'nsec-placeholder',
             deviceNpub: 'npub-new',
@@ -982,6 +985,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ShellHome(
+          selfIndexDiscovery: EmptyNStackDiscovery(),
           config: config,
           bridge: NativeCoreBridge(),
           signerStore: SignerStore(),
@@ -1013,6 +1017,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ShellHome(
+          selfIndexDiscovery: EmptyNStackDiscovery(),
           config: config,
           bridge: NativeCoreBridge(),
           signerStore: SignerStore(),
@@ -1045,6 +1050,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ShellHome(
+          selfIndexDiscovery: EmptyNStackDiscovery(),
           config: AppConfig.defaults().copyWith(
             deviceSecret: 'nsec-placeholder',
             deviceNpub: signer,
@@ -1075,6 +1081,7 @@ void main() {
 
     Widget shell() => MaterialApp(
           home: ShellHome(
+            selfIndexDiscovery: EmptyNStackDiscovery(),
             config: config,
             bridge: NativeCoreBridge(),
             signerStore: SignerStore(),
@@ -1215,6 +1222,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ShellHome(
+          selfIndexDiscovery: EmptyNStackDiscovery(),
           config: AppConfig.defaults().copyWith(
             deviceSecret: 'nsec-placeholder',
             deviceNpub: signer,
@@ -1239,6 +1247,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ShellHome(
+          selfIndexDiscovery: EmptyNStackDiscovery(),
           config: AppConfig.defaults().copyWith(
             deviceSecret: 'nsec-placeholder',
             deviceNpub: 'npub-keyboard-tabs',
@@ -1283,6 +1292,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ShellHome(
+          selfIndexDiscovery: EmptyNStackDiscovery(),
           config: AppConfig.defaults().copyWith(
             deviceSecret: 'nsec-placeholder',
             deviceNpub: 'npub-artifact-iframe',
@@ -1380,6 +1390,7 @@ void main() {
         addTearDown(tester.view.resetDevicePixelRatio);
         await tester.pumpWidget(MaterialApp(
             home: ShellHome(
+          selfIndexDiscovery: EmptyNStackDiscovery(),
           config: AppConfig.defaults(),
           bridge: NativeCoreBridge(),
           signerStore: SignerStore(),
@@ -1482,6 +1493,7 @@ void main() {
         darkTheme: ThemeData.dark(),
         themeMode: ThemeMode.dark,
         home: ShellHome(
+          selfIndexDiscovery: EmptyNStackDiscovery(),
           config: config,
           bridge: NativeCoreBridge(),
           signerStore: SignerStore(),
@@ -1553,6 +1565,7 @@ void main() {
       MaterialApp(
         theme: ThemeData.dark(),
         home: ShellHome(
+          selfIndexDiscovery: EmptyNStackDiscovery(),
           config: config,
           bridge: NativeCoreBridge(),
           signerStore: SignerStore(),
@@ -1574,6 +1587,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: ShellHome(
+            selfIndexDiscovery: EmptyNStackDiscovery(),
             config: AppConfig.defaults(),
             bridge: NativeCoreBridge(),
             signerStore: SignerStore(),
@@ -1634,6 +1648,7 @@ void main() {
         home: MediaQuery(
           data: const MediaQueryData(padding: safePadding),
           child: ShellHome(
+            selfIndexDiscovery: EmptyNStackDiscovery(),
             config: config,
             bridge: NativeCoreBridge(),
             signerStore: SignerStore(),
@@ -1672,6 +1687,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ShellHome(
+          selfIndexDiscovery: EmptyNStackDiscovery(),
           config: config,
           profileRelayClient: _AcceptProfileRelays(),
           bridge: NativeCoreBridge(),
@@ -1712,6 +1728,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ShellHome(
+          selfIndexDiscovery: EmptyNStackDiscovery(),
           config: config,
           profileRelayClient: _AcceptProfileRelays(),
           bridge: NativeCoreBridge(),
@@ -1739,6 +1756,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ShellHome(
+          selfIndexDiscovery: EmptyNStackDiscovery(),
           config: AppConfig.defaults(),
           bridge: NativeCoreBridge(),
           signerStore: SignerStore(),
@@ -1756,6 +1774,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ShellHome(
+          selfIndexDiscovery: EmptyNStackDiscovery(),
           config: AppConfig.defaults().copyWith(
             displayExperimentalFlightDeckDriveSync: true,
           ),
@@ -1774,6 +1793,7 @@ void main() {
       (tester) async {
     await tester.pumpWidget(
       WingmanApp(
+        selfIndexDiscovery: EmptyNStackDiscovery(),
         signerVault: SignerVault(
           localStore: MemorySignerVaultLocalStore(),
           secretStore: MemorySignerVaultSecretStore(),
@@ -1802,6 +1822,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ShellHome(
+          selfIndexDiscovery: EmptyNStackDiscovery(),
           config: AppConfig.defaults().copyWith(
             deviceSecret: 'nsec-placeholder',
             deviceNpub: 'npub-logout',

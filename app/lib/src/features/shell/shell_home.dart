@@ -28,6 +28,7 @@ class ShellHome extends StatefulWidget {
     this.relayDiagnosticsAtLaunch = false,
     this.onRelayDiagnosticsChanged,
     this.profileRelayClient,
+    this.selfIndexDiscovery,
     this.fipsRuntime,
     required this.bridge,
     required this.signerStore,
@@ -43,6 +44,7 @@ class ShellHome extends StatefulWidget {
   final bool relayDiagnosticsAtLaunch;
   final Future<void> Function(bool)? onRelayDiagnosticsChanged;
   final NostrProfileRelayClient? profileRelayClient;
+  final NStackSelfIndexDiscovery? selfIndexDiscovery;
   final FipsRuntimeService? fipsRuntime;
   final NativeCoreBridge bridge;
   final SignerStore signerStore;
@@ -79,7 +81,7 @@ class _ShellHomeState extends State<ShellHome> {
           registryStore: _nstackRegistryStore,
           discovery: TowerNStackWorkspaceDiscovery(verifyMembership: true));
   late final NStackSelfIndexDiscovery _nstackSelfIndexDiscovery =
-      NStackSelfIndexDiscovery();
+      widget.selfIndexDiscovery ?? NStackSelfIndexDiscovery();
   late final NStackRecoveryService _nstackRecoveryService =
       NStackRecoveryService(
     registryStore: _nstackRegistryStore,

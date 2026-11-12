@@ -67,6 +67,28 @@ Future<Map<String, dynamic>> index(
 }
 
 void main() {
+  test('newer signed malformed tags shadow older usable locator', () async {
+    final old = await index();
+    final tags =
+        (old['tags'] as List).map((t) => List<String>.from(t as List)).toList();
+    final duplicateP = await index(at: 101, tags: [
+      ...tags,
+      ['p', user.publicKeyHex]
+    ]);
+    final wrongProtocol = await index(
+        at: 101,
+        tags: tags
+            .map((t) => t[0] == 'protocol' ? ['protocol', 'unknown'] : t)
+            .toList());
+    final duplicateD = await index(at: 101, tags: [...tags, tags[0]]);
+    expect(await workspaceIndexCandidates([old, duplicateP], secret: secret),
+        isEmpty);
+    expect(await workspaceIndexCandidates([old, wrongProtocol], secret: secret),
+        isEmpty);
+    expect(await workspaceIndexCandidates([old, duplicateD], secret: secret),
+        isEmpty);
+  });
+
   test(
       'announcement requires ACK and exact signed readback and preserves locator identity',
       () async {

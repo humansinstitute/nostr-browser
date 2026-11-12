@@ -1,3 +1,4 @@
+import 'fake_nstack_discovery.dart';
 import 'pin_input_test_helpers.dart';
 import 'package:wingman_app/src/widgets/immediate_pin_field.dart';
 import 'dart:async';
@@ -116,7 +117,9 @@ void main() {
           title: 'other.test', url: 'https://other.test', startup: true),
     ]);
     await tester.pumpWidget(WingmanApp(
-        signerVault: vault, profileRelayClient: FakeProfileRelays()));
+        selfIndexDiscovery: EmptyNStackDiscovery(),
+        signerVault: vault,
+        profileRelayClient: FakeProfileRelays()));
     await tester.pumpAndSettle();
     expect(find.text('Unlock'), findsOneWidget);
     expect(find.byType(BrowserScreen), findsNothing);
@@ -180,8 +183,10 @@ void main() {
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final vault = ObservedVault();
       final relays = FakeProfileRelays();
-      await tester.pumpWidget(
-          WingmanApp(signerVault: vault, profileRelayClient: relays));
+      await tester.pumpWidget(WingmanApp(
+          selfIndexDiscovery: EmptyNStackDiscovery(),
+          signerVault: vault,
+          profileRelayClient: relays));
       await tester.pumpAndSettle();
       await openAvatar(tester, 'Create identity / Import key');
       await tester.tap(find.byTooltip('Back'));
@@ -240,7 +245,9 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final vault = ObservedVault();
     await tester.pumpWidget(WingmanApp(
-        signerVault: vault, profileRelayClient: FakeProfileRelays()));
+        selfIndexDiscovery: EmptyNStackDiscovery(),
+        signerVault: vault,
+        profileRelayClient: FakeProfileRelays()));
     await tester.pumpAndSettle();
     await openAvatar(tester, 'Create identity / Import key');
     await tester.tap(find.text('Import key'));

@@ -16,18 +16,21 @@ import 'features/browser/signer_store.dart';
 import 'features/shell/shell_home.dart';
 import 'features/onboarding/signer_onboarding_screen.dart';
 import 'features/onboarding/welcome_surface.dart';
+import 'features/nstack/nstack_self_index.dart';
 
 class WingmanApp extends StatefulWidget {
   const WingmanApp({
     this.useSignerVault = true,
     this.signerVault,
     this.profileRelayClient,
+    this.selfIndexDiscovery,
     super.key,
   });
 
   final bool useSignerVault;
   final SignerVault? signerVault;
   final NostrProfileRelayClient? profileRelayClient;
+  final NStackSelfIndexDiscovery? selfIndexDiscovery;
 
   @override
   State<WingmanApp> createState() => _WingmanAppState();
@@ -199,6 +202,7 @@ class _WingmanAppState extends State<WingmanApp> {
       relayDiagnosticsAtLaunch: _launchRelayDiagnostics,
       onRelayDiagnosticsChanged: _setRelayDiagnostics,
       profileRelayClient: widget.profileRelayClient,
+      selfIndexDiscovery: widget.selfIndexDiscovery,
       bridge: _bridge,
       signerStore: _signerStore,
       onConfigChanged: _updateConfig,

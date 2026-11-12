@@ -236,12 +236,13 @@ Future<List<NStackIndexLocator>> workspaceIndexCandidates(
           event['created_at'] > clock + 300) {
         continue;
       }
-      if (_singleton(event, 'p') != user.publicKeyHex ||
-          _singleton(event, 'protocol') != 'workspace-self-index' ||
-          _singleton(event, 'v') != '1') {
+      final dTag = (event['tags'] as List)
+          .where((tag) => tag is List && tag.length >= 2 && tag[0] == 'd')
+          .firstOrNull;
+      if (dTag == null || dTag[1] is! String) {
         continue;
       }
-      final d = _singleton(event, 'd');
+      final d = dTag[1] as String;
       final old = latest[d];
       if (old == null ||
           event['created_at'] > old['created_at'] ||
@@ -254,6 +255,11 @@ Future<List<NStackIndexLocator>> workspaceIndexCandidates(
   final candidates = <NStackIndexLocator>[];
   for (final event in latest.values) {
     try {
+      if (_singleton(event, 'p') != user.publicKeyHex ||
+          _singleton(event, 'protocol') != 'workspace-self-index' ||
+          _singleton(event, 'v') != '1') {
+        continue;
+      }
       final app = _singleton(event, 'app_pub');
       if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(app)) continue;
       final p = jsonDecode(await Nip44().decrypt(
