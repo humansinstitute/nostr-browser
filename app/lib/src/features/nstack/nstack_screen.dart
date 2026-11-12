@@ -7,6 +7,7 @@ import '../../core/app_config.dart';
 import 'nstack_access.dart';
 import 'nstack_discovery.dart';
 import 'nstack_workspace_discovery.dart';
+import 'nstack_self_index.dart';
 import 'nstack_models.dart';
 import 'nstack_recovery.dart';
 import 'nstack_store.dart';
@@ -19,6 +20,7 @@ class NStackScreen extends StatefulWidget {
     required this.accessService,
     required this.discoveryService,
     this.catalogueDiscoveryService,
+    this.selfIndexDiscovery,
     required this.recoveryService,
     required this.onRegistryChanged,
     super.key,
@@ -31,6 +33,7 @@ class NStackScreen extends StatefulWidget {
   final NStackWorkspaceDiscoveryService discoveryService;
   final NStackDiscoveryService? catalogueDiscoveryService;
   final NStackRecoveryService recoveryService;
+  final NStackSelfIndexDiscovery? selfIndexDiscovery;
   final VoidCallback onRegistryChanged;
 
   @override
@@ -47,6 +50,10 @@ class _NStackScreenState extends State<NStackScreen> {
   NStackBackupNamespaceState? _namespaceState;
   String? _namespaceDestinationKey;
   int _identityEpoch = 0;
+  List<NStackDiscoveredTower> _discoveredTowers = const [];
+  String? _discoveryMessage;
+  bool _discoveringTowers = false;
+  bool _announcementPending = false;
 
   @override
   void initState() {
@@ -54,6 +61,7 @@ class _NStackScreenState extends State<NStackScreen> {
     widget.accessService.addListener(_refreshView);
     widget.grantStore.addListener(_refreshView);
     unawaited(_load());
+    unawaited(_discoverTowers());
   }
 
   @override
@@ -67,7 +75,8 @@ class _NStackScreenState extends State<NStackScreen> {
       oldWidget.grantStore.removeListener(_refreshView);
       widget.grantStore.addListener(_refreshView);
     }
-    if (oldWidget.config.deviceNpub != widget.config.deviceNpub) {
+    if (oldWidget.config.deviceNpub != widget.config.deviceNpub ||
+        oldWidget.config.deviceSecret != widget.config.deviceSecret) {
       _identityEpoch++;
       setState(() {
         _registry = const NStackRegistry();
@@ -78,8 +87,13 @@ class _NStackScreenState extends State<NStackScreen> {
         _message = null;
         _namespaceState = null;
         _namespaceDestinationKey = null;
+        _discoveredTowers = const [];
+        _discoveryMessage = null;
+        _discoveringTowers = false;
+        _announcementPending = false;
       });
       unawaited(_load());
+      unawaited(_discoverTowers());
     }
   }
 
@@ -160,6 +174,25 @@ class _NStackScreenState extends State<NStackScreen> {
             key: const ValueKey('nstack-discovery-identity'),
           ),
           const SizedBox(height: 18),
+          if (widget.selfIndexDiscovery != null) ...[
+            Text('Discover your Towers',
+                style: Theme.of(context).textTheme.titleMedium),
+            if (_discoveryMessage != null) Text(_discoveryMessage!),
+            if (_discoveringTowers) const LinearProgressIndicator(),
+            for (final tower in _discoveredTowers)
+              ListTile(
+                title: Text(Uri.parse(tower.origin).host),
+                subtitle: Text(tower.origin),
+                trailing: FilledButton(
+                    onPressed: _busy ? null : () => _addDiscoveredTower(tower),
+                    child: const Text('Choose Tower')),
+              ),
+            TextButton(
+                onPressed: _discoveringTowers || !widget.config.hasDeviceSecret
+                    ? null
+                    : _discoverTowers,
+                child: const Text('Retry Tower discovery')),
+          ],
           if (_registry.stacks.isEmpty)
             const Card(
               child: ListTile(
@@ -175,6 +208,10 @@ class _NStackScreenState extends State<NStackScreen> {
           _recoveryCard(),
           const SizedBox(height: 18),
           _accessCard(),
+          if (_announcementPending)
+            TextButton(
+                onPressed: _busy ? null : _retryAnnouncement,
+                child: const Text('Retry workspace announcement')),
           if (_message != null) ...[
             const SizedBox(height: 14),
             Text(_message!, key: const ValueKey('nstack-message')),
@@ -524,6 +561,7 @@ class _NStackScreenState extends State<NStackScreen> {
       _namespaceState = null;
       _message =
           'Backup destination selected: ${stack.displayName} · ${workspace.displayName}.';
+      await _announceWorkspace(stack, workspace);
     });
   }
 
@@ -660,6 +698,134 @@ class _NStackScreenState extends State<NStackScreen> {
             icon: const Icon(Icons.copy),
             onPressed: () => Clipboard.setData(ClipboardData(text: value))),
       );
+
+  Future<void> _announceWorkspace(
+      NStackEntry stack, NStackWorkspace workspace) async {
+    final service = widget.selfIndexDiscovery;
+    final discovery = widget.discoveryService.discovery;
+    if (service == null || discovery is! TowerNStackWorkspaceDiscovery) {
+      return;
+    }
+    final identity = widget.config.deviceNpub;
+    final secret = widget.config.deviceSecret;
+    try {
+      var locatorIdentity =
+          discovery.verifiedIdentity(identity, stack.url, workspace.remoteId);
+      if (locatorIdentity == null) {
+        await widget.discoveryService
+            .refresh(identityNpub: identity, secret: secret, stackId: stack.id);
+        locatorIdentity =
+            discovery.verifiedIdentity(identity, stack.url, workspace.remoteId);
+      }
+      if (identity != widget.config.deviceNpub ||
+          secret != widget.config.deviceSecret) {
+        return;
+      }
+      if (locatorIdentity == null) {
+        throw StateError('Membership identity unavailable.');
+      }
+      await service.announce(
+          NStackIndexLocator(stack.url, locatorIdentity, workspace.name),
+          secret: secret);
+      if (identity == widget.config.deviceNpub &&
+          secret == widget.config.deviceSecret) {
+        _announcementPending = false;
+      }
+    } catch (_) {
+      if (identity == widget.config.deviceNpub &&
+          secret == widget.config.deviceSecret) {
+        _announcementPending = true;
+        _message =
+            'Connection usable. Workspace announcement pending; retry when online.';
+      }
+    }
+  }
+
+  Future<void> _retryAnnouncement() async {
+    final destination = _registry.backupDestination;
+    if (destination == null) {
+      return;
+    }
+    for (final stack in _registry.stacks) {
+      if (stack.id != destination.stackId) {
+        continue;
+      }
+      for (final workspace in stack.workspaces) {
+        if (workspace.id == destination.workspaceId) {
+          await _run(() => _announceWorkspace(stack, workspace));
+        }
+      }
+    }
+  }
+
+  Future<void> _discoverTowers() async {
+    final service = widget.selfIndexDiscovery;
+    if (service == null ||
+        !widget.config.hasDeviceSecret ||
+        _discoveringTowers) {
+      return;
+    }
+    final epoch = _identityEpoch;
+    final identity = widget.config.deviceNpub;
+    final secret = widget.config.deviceSecret;
+    setState(() {
+      _discoveringTowers = true;
+      _discoveryMessage = 'Finding your encrypted workspace indexes…';
+    });
+    try {
+      final towers =
+          await service.discover(identityNpub: identity, secret: secret);
+      if (!mounted ||
+          epoch != _identityEpoch ||
+          identity != widget.config.deviceNpub ||
+          secret != widget.config.deviceSecret) {
+        return;
+      }
+      setState(() {
+        _discoveredTowers = towers;
+        _discoveryMessage = towers.isEmpty
+            ? 'No verified Towers found. Add an HTTPS address to continue.'
+            : 'Choose a Tower to list all its accessible workspaces.';
+      });
+    } catch (_) {
+      if (mounted && epoch == _identityEpoch) {
+        setState(() {
+          _discoveryMessage =
+              'Tower discovery failed. Retry or add an HTTPS address.';
+        });
+      }
+    } finally {
+      if (mounted && epoch == _identityEpoch) {
+        setState(() {
+          _discoveringTowers = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _addDiscoveredTower(NStackDiscoveredTower tower) async {
+    final identity = widget.config.deviceNpub;
+    final secret = widget.config.deviceSecret;
+    await _run(() async {
+      final result = await widget.discoveryService.add(
+          identityNpub: identity,
+          secret: secret,
+          address: tower.origin,
+          expectedTowerNpub: tower.towerNpub);
+      if (!mounted ||
+          identity != widget.config.deviceNpub ||
+          secret != widget.config.deviceSecret) {
+        return;
+      }
+      if (result.publicIdentity != tower.towerNpub) {
+        throw StateError('Tower identity changed.');
+      }
+      await widget.catalogueDiscoveryService?.refresh(identity, result.id);
+      widget.onRegistryChanged();
+      _message =
+          'Tower selected. Choose one of its ${result.workspaces.length} accessible workspaces below.';
+    });
+  }
 
   Future<void> _editStack([NStackEntry? existing]) async {
     final address = await showDialog<String>(

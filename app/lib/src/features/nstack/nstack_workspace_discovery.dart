@@ -36,10 +36,16 @@ class TowerNStackWorkspaceDiscovery implements NStackWorkspaceDiscovery {
   TowerNStackWorkspaceDiscovery({
     http.Client? client,
     this.timeout = nstackWorkspaceDiscoveryTimeout,
+    this.verifyMembership = false,
   }) : _client = client ?? http.Client();
 
   final http.Client _client;
   final Duration timeout;
+  final bool verifyMembership;
+  final Map<String, Map<String, String>> verifiedIdentities = {};
+  Map<String, String>? verifiedIdentity(
+          String signerNpub, String origin, String workspaceId) =>
+      verifiedIdentities['$signerNpub|$origin|$workspaceId'];
 
   @override
   Future<List<NStackWorkspace>> discover({
@@ -71,9 +77,13 @@ class TowerNStackWorkspaceDiscovery implements NStackWorkspaceDiscovery {
       queryParameters: {'member_npub': identityNpub},
     );
     try {
-      final legacy = validateWorkspaceDiscoveryResponse(
-        await _getJson(legacyUrl, secret),
-      );
+      var legacy = <NStackWorkspace>[];
+      try {
+        legacy = validateWorkspaceDiscoveryResponse(
+            await _getJson(legacyUrl, secret, allowUnsupportedEndpoint: true));
+      } on NStackWorkspaceDiscoveryException catch (error) {
+        if (error.code != 'unsupported_endpoint') rethrow;
+      }
       final flightDeck = await _discoverFlightDeckWorkspaces(
         rootUri: rootUri,
         basePath: basePath,
@@ -124,6 +134,60 @@ class TowerNStackWorkspaceDiscovery implements NStackWorkspaceDiscovery {
         }
         rethrow;
       }
+      if (response is Map &&
+          (response['partial'] == true ||
+              (response['workspaces'] is List &&
+                  (response['workspaces'] as List).length >
+                      nstackFlightDeckWorkspacePageSize))) {
+        throw const NStackWorkspaceDiscoveryException(
+            'invalid_response', 'Incomplete or oversized workspace page.');
+      }
+      if (verifyMembership &&
+          response is Map<String, dynamic> &&
+          response['workspaces'] is List) {
+        final verified = <dynamic>[];
+        for (final raw in response['workspaces'] as List) {
+          try {
+            if (raw is! Map<String, dynamic> ||
+                raw['identity'] is! Map<String, dynamic>) {
+              continue;
+            }
+            final identity = raw['identity'] as Map<String, dynamic>;
+            final id = identity['workspace_id'];
+            final app = _validNpub(identity['app_npub']);
+            if (id is! String ||
+                !RegExp(r'^[0-9a-fA-F-]{36}$').hasMatch(id) ||
+                app == null) {
+              continue;
+            }
+            final me = await _getJson(
+                rootUri.replace(
+                    path: '$basePath/api/v4/flightdeck-pg/workspaces/$id/me'),
+                secret,
+                appNpub: app);
+            const keys = [
+              'workspace_id',
+              'tower_service_npub',
+              'workspace_service_npub',
+              'workspace_owner_npub',
+              'app_npub'
+            ];
+            if (me is Map &&
+                me['identity'] is Map &&
+                keys.every((key) => me['identity'][key] == identity[key])) {
+              verified.add(raw);
+              final who = NostrCrypto.importIdentity(secret).npub;
+              final origin = canonicalNStackUrl(rootUri.toString());
+              verifiedIdentities['$who|$origin|$id'] = {
+                for (final key in keys) key: identity[key] as String
+              };
+            }
+          } catch (_) {
+            /* revoked or malformed membership never enters saved selectors */
+          }
+        }
+        response = {...response, 'workspaces': verified};
+      }
       final page = _validateFlightDeckWorkspaceDiscoveryResponse(
         response,
         verifiedTowerRoot: rootUri,
@@ -162,6 +226,7 @@ class TowerNStackWorkspaceDiscovery implements NStackWorkspaceDiscovery {
     Uri url,
     String secret, {
     bool allowUnsupportedEndpoint = false,
+    String? appNpub,
   }) async {
     final authorization = NostrCrypto.signNip98(
       secret: secret,
@@ -177,6 +242,7 @@ class TowerNStackWorkspaceDiscovery implements NStackWorkspaceDiscovery {
       ..followRedirects = false
       ..headers['accept'] = 'application/json'
       ..headers['authorization'] = authorization;
+    if (appNpub != null) request.headers['x-flightdeck-pg-app-npub'] = appNpub;
     try {
       final bytes = await _read(
         request,
@@ -319,6 +385,11 @@ _FlightDeckWorkspacePage _validateFlightDeckWorkspaceDiscoveryResponse(
   if (value['next_cursor'] != null && nextCursor == null) {
     throw const NStackWorkspaceDiscoveryException('invalid_response',
         'NStack returned an invalid Flight Deck workspace cursor.');
+  }
+  if (value['partial'] == true ||
+      (value['has_more'] == true && nextCursor == null)) {
+    throw const NStackWorkspaceDiscoveryException(
+        'invalid_response', 'Incomplete Flight Deck workspace pagination.');
   }
   final rawWorkspaces = value['workspaces'] as List;
   if (rawWorkspaces.length > nstackFlightDeckWorkspacePageSize) {
@@ -494,6 +565,7 @@ class NStackWorkspaceDiscoveryService {
     required String identityNpub,
     required String secret,
     required String address,
+    String? expectedTowerNpub,
   }) async {
     final canonical = canonicalNStackUrl(address);
     if (canonical == null) {
@@ -504,6 +576,10 @@ class NStackWorkspaceDiscoveryService {
     final existing =
         registry.stacks.where((stack) => stack.url == canonical).firstOrNull;
     if (existing != null) {
+      if (expectedTowerNpub != null &&
+          existing.publicIdentity != expectedTowerNpub) {
+        throw StateError('Tower identity changed.');
+      }
       return refresh(
         identityNpub: identityNpub,
         secret: secret,
@@ -515,6 +591,12 @@ class NStackWorkspaceDiscoveryService {
       identityNpub: identityNpub,
       secret: secret,
     );
+    if (expectedTowerNpub != null &&
+        (!discovered.any((w) => w.serviceNpub == expectedTowerNpub) ||
+            discovered.any((w) =>
+                w.serviceNpub != null && w.serviceNpub != expectedTowerNpub))) {
+      throw StateError('Tower identity changed.');
+    }
     // Add identifies a saved connection by its canonical address, not by a
     // service key that may be shared by multiple endpoints. Moving an existing
     // connection belongs to changeAddress and its explicit identity checks.

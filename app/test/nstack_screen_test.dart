@@ -10,6 +10,7 @@ import 'package:wingman_app/src/core/app_config.dart';
 import 'package:wingman_app/src/core/nostr_crypto.dart';
 import 'package:wingman_app/src/features/nstack/nstack_access.dart';
 import 'package:wingman_app/src/features/nstack/nstack_workspace_discovery.dart';
+import 'package:wingman_app/src/features/nstack/nstack_self_index.dart';
 import 'package:wingman_app/src/features/nstack/nstack_models.dart';
 import 'package:wingman_app/src/features/nstack/nstack_recovery.dart';
 import 'package:wingman_app/src/features/nstack/nstack_screen.dart';
@@ -19,6 +20,47 @@ void main() {
   setUp(() {
     SharedPreferencesAsyncPlatform.instance =
         InMemorySharedPreferencesAsync.empty();
+  });
+
+  testWidgets(
+      'discovers two Towers without saving or selecting until explicit choice',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 3000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final identity = NostrCrypto.importIdentity(_identitySecret);
+    final store = NStackRegistryStore();
+    final grants = NStackGrantStore();
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: NStackScreen(
+      config: AppConfig.defaults().copyWith(
+          deviceNpub: identity.npub,
+          devicePublicKeyHex: identity.publicKeyHex,
+          deviceSecret: _identitySecret),
+      registryStore: store,
+      grantStore: grants,
+      accessService:
+          NStackAccessService(registryStore: store, grantStore: grants),
+      discoveryService: NStackWorkspaceDiscoveryService(
+          registryStore: store, discovery: _SharedIdentityDiscovery()),
+      selfIndexDiscovery: _TwoTowerDiscovery(),
+      recoveryService: NStackRecoveryService(
+          registryStore: store, storage: _NoStorage(), relay: _NoRelay()),
+      onRegistryChanged: () {},
+    ))));
+    await tester.pumpAndSettle();
+    expect(find.text('Choose Tower'), findsNWidgets(2));
+    expect((await store.load(identity.npub)).stacks, isEmpty);
+    await tester.tap(find.text('Choose Tower').first);
+    await tester.pumpAndSettle();
+    expect((await store.load(identity.npub)).stacks.map((s) => s.url),
+        ['https://first.example']);
+    expect((await store.load(identity.npub)).backupDestination, isNull);
+    await tester.tap(find.text('Choose Tower').last);
+    await tester.pumpAndSettle();
+    expect((await store.load(identity.npub)).stacks, hasLength(2));
+    expect((await store.load(identity.npub)).backupDestination, isNull);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('second add keeps both cards after screen restoration',
@@ -681,5 +723,15 @@ class _SharedIdentityDiscovery implements NStackWorkspaceDiscovery {
             workspaceServiceNpub: identityNpub,
             serviceNpub: identityNpub,
             directHttpsUrl: address),
+      ];
+}
+
+class _TwoTowerDiscovery extends NStackSelfIndexDiscovery {
+  @override
+  Future<List<NStackDiscoveredTower>> discover(
+          {required String identityNpub, required String secret}) async =>
+      [
+        NStackDiscoveredTower('https://first.example', identityNpub),
+        NStackDiscoveredTower('https://second.example', identityNpub)
       ];
 }

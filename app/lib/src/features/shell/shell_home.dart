@@ -12,6 +12,7 @@ import '../onboarding/signer_onboarding_screen.dart';
 import '../nstack/nstack_access.dart';
 import '../nstack/nstack_discovery.dart';
 import '../nstack/nstack_workspace_discovery.dart';
+import '../nstack/nstack_self_index.dart';
 import '../nstack/nstack_recovery.dart';
 import '../nstack/nstack_screen.dart';
 import '../nstack/nstack_store.dart';
@@ -74,7 +75,11 @@ class _ShellHomeState extends State<ShellHome> {
   late final NStackDiscoveryService _nstackDiscoveryService =
       NStackDiscoveryService(registryStore: _nstackRegistryStore);
   late final NStackWorkspaceDiscoveryService _nstackWorkspaceDiscoveryService =
-      NStackWorkspaceDiscoveryService(registryStore: _nstackRegistryStore);
+      NStackWorkspaceDiscoveryService(
+          registryStore: _nstackRegistryStore,
+          discovery: TowerNStackWorkspaceDiscovery(verifyMembership: true));
+  late final NStackSelfIndexDiscovery _nstackSelfIndexDiscovery =
+      NStackSelfIndexDiscovery();
   late final NStackRecoveryService _nstackRecoveryService =
       NStackRecoveryService(
     registryStore: _nstackRegistryStore,
@@ -115,6 +120,7 @@ class _ShellHomeState extends State<ShellHome> {
               grantStore: _nstackGrantStore,
               accessService: _nstackAccessService,
               discoveryService: _nstackWorkspaceDiscoveryService,
+              selfIndexDiscovery: _nstackSelfIndexDiscovery,
               catalogueDiscoveryService: _nstackDiscoveryService,
               recoveryService: _nstackRecoveryService,
               onRegistryChanged: () {

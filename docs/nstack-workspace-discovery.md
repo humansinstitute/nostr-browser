@@ -1,0 +1,7 @@
+# Cross-app Tower discovery
+
+NBrowser automatically attempts bounded encrypted kind-33356 index discovery when its native Nostr identity unlocks or is restored. Website logins never select the native discovery identity. Relay queries use author and p-tag without app filtering; local signature, singleton protocol/version/user, NIP-44 payload, address and newest-event deletion checks accept compatible flat and nested locators from other NStack clients. Each candidate requires fresh authenticated `/me` matching all five locator identity fields. Invalid, revoked and unreachable candidates are isolated.
+
+The NStacks screen presents each verified Tower explicitly. Choosing one lists its full paginated authenticated workspaces through the existing registry service, then users select a workspace. Production PG listing verifies each membership before saving. HTTPS manual entry and visible retry remain available. Selecting a backup workspace attempts publication of a compatible self-index with acknowledgement and exact-event readback; failed publication leaves the connection usable with a pending message and retry.
+
+Relay discovery never automatically saves a Tower or changes the backup destination, host connection, browser bookmarks or website grants. Existing registry merge rules preserve stable IDs and identity-scoped settings, and the browser NStack provider still enumerates only explicitly saved connections subject to existing origin consent. The transport and authentication layers remain separate.
