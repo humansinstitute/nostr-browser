@@ -147,3 +147,9 @@ Browser release APK validation rejects `assets/flightdeck/` and
 The legacy broker publisher checks all signed certificate claims on the official relay before each signature and each relay send, including retained-proof continuations, channel migrations and listing amendments. Nightly preparation checks before opening its Android signing inputs. If another publisher has claimed the certificate, the query is incomplete, or claim history is ambiguous, Zapstore publishing is held; local builds and readback remain available. This prevents an old scheduled release from publishing a newer old-owner claim after an ownership transfer.
 
 This is a conservative Nostr-signed-claim hold, not independent app-key verification or a global ownership oracle. A foreign signed claim can require manual review even if its app-key proof is invalid. Once ownership moves, use the authorized owner's AP Vault release path; changing the old broker's publisher environment does not grant it owner signing authority. Do not bypass the hold or replay retained old-owner events.
+
+## Android adaptive launcher icon
+
+The manifest uses `@mipmap/ic_launcher` for both `icon` and `roundIcon`. Android 8+ selects the adaptive resource in `mipmap-anydpi-v26`, with independent full-bleed background and safe foreground layers. Earlier Android versions retain the legacy fallback. The dark background fills the mask; the approved Android artwork bytes are retained and inset 18 dp on the 108 dp layer. Both stable and nightly use these launcher resources.
+
+When updating artwork, inspect both a circle and a squircle mask over the central 72 dp of the 108 dp layers, and keep essential foreground details within the central 66 dp safe circle. Check the merged release manifest and packaged resources, then run the app’s documented release build and lint. Launcher caches may need a normal refresh after an in-place update; never uninstall or clear user data to refresh an icon.
