@@ -2,6 +2,13 @@ window.__NSTACK_PACKAGED_SHELL__=true;
 import { generateSecretKey, getPublicKey, nip19 } from './crypto.js';
 let API_BASE = "";
 let apiTransport=null, shellConnection=null, shellTransport=null, shellVerifier=null;
+let signerQueue = Promise.resolve();
+function withSigner(action) {
+  const result = signerQueue.then(action);
+  // A denied request must not prevent a later explicit approval attempt.
+  signerQueue = result.catch(() => {});
+  return result;
+}
 const $ = (id) => document.getElementById(id);
 const state = { pubkey: null, npub: null, workspaces: [], active: null, generation: 0, session: 0, view: 'overview', apps: [], offset: 0, review: null, connecting: false };
 const ownerOf = (w) => w?.kind === 'typed' ? 'typed:' + w.workspace_id : w?.workspace_owner_npub;
@@ -71,11 +78,15 @@ async function signedFetch(path, method = 'GET', body) {
   const session = state.session;
   if (!state.pubkey || !window.nostr?.signEvent) throw new Error('Connect a Nostr browser signer first.');
   const expected = state.pubkey;
-  if (await window.nostr.getPublicKey() !== expected) throw new Error('Your signer identity changed. Disconnect and connect again.');
   const url = API_BASE + path, raw = body === undefined ? '' : JSON.stringify(body);
   const tags = [['u', url], ['method', method]];
   if (raw) tags.push(['payload', await digest(raw)]);
-  const event = await window.nostr.signEvent({ kind: 27235, created_at: Math.floor(Date.now() / 1000), tags, content: '' });
+  const event = await withSigner(async () => {
+    if (session !== state.session || state.pubkey !== expected) throw new Error('Connection changed. Try again with the current signer.');
+    if (await window.nostr.getPublicKey() !== expected) throw new Error('Your signer identity changed. Disconnect and connect again.');
+    if (session !== state.session || state.pubkey !== expected) throw new Error('Connection changed. Try again with the current signer.');
+    return window.nostr.signEvent({ kind: 27235, created_at: Math.floor(Date.now() / 1000), tags, content: '' });
+  });
   if (session !== state.session || event.pubkey !== expected) throw new Error('Connection changed. Try again with the current signer.');
   return transportFetch(url, { method, cache: 'no-store', headers: { Authorization: 'Nostr ' + btoa(JSON.stringify(event)), ...(raw ? { 'Content-Type': 'application/json' } : {}) }, ...(raw ? { body: raw } : {}) });
 }
