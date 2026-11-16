@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "nstack",
-  "sourceRevision": "54b1e74ba868acf0693e9ca187fc465975691deb",
+  "sourceRevision": "e7b630ecd713bfded9e186cb483b8cb0e2ebd2b6",
   "entrypoint": "index.html",
   "files": {
     "index.html": {
@@ -13,7 +13,7 @@
       "contentType": "text/javascript; charset=utf-8"
     },
     "ui/assets/console.js": {
-      "sha256": "1e07ca5ee6463061d6c62d2ded9348e2e6e1035b84b35c7348af6d3573420312",
+      "sha256": "1f10ee3afba36a4a7ebb5d78f299315caa4261c9d08af0eb8bbd7c67f94ce9ed",
       "contentType": "text/javascript; charset=utf-8"
     },
     "ui/assets/console.css": {

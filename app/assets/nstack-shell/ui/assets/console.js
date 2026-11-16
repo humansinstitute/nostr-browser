@@ -539,13 +539,16 @@ if(window.__NSTACK_PACKAGED_SHELL__===true){
     const parsed=shellVerifier.parse(input.value.trim());
     preview.replaceChildren(details([['Workspace',parsed.name||parsed.workspace_id],['Workspace UUID',parsed.workspace_id],['Service identity',parsed.service_npub],['Workspace authority',parsed.workspace_service_npub]]),text('p','Trust the QR source and compare the full identities. A connection grants no workspace access. Your own signer and exact workspace are checked before use.'));
     for(const transport of ['fips','https'])if(parsed.transports[transport])preview.append(button('Use '+transport.toUpperCase(),async()=>{
-      if(!confirm('Connect to this exact backend and workspace using '+transport.toUpperCase()+'?'))return;
       const f=parsed.transports.fips;const endpoint=transport==='fips'?'http://'+f.host+':'+f.port:parsed.transports.https.url;
+      // Keep confirmation inside this document: native JS dialogs can revoke
+      // transport capabilities when the WebView loses foreground focus.
+      review('Connect using '+transport.toUpperCase()+'?', [details([['Backend',endpoint],['Workspace UUID',parsed.workspace_id],['Service identity',parsed.service_npub],['Workspace authority',parsed.workspace_service_npub]]),text('p','Confirm this exact backend, workspace and transport. Your signer and native endpoint consent remain separate.')], 'Connect using '+transport.toUpperCase(),async()=>{
       const pinned=localStorage.getItem('nstack.shell.service.'+endpoint);if(pinned&&pinned!==parsed.service_npub)throw Error('Stored backend identity mismatch');
       disconnect();shellConnection=parsed;shellTransport=transport;API_BASE=endpoint;$('backend').textContent=endpoint;
       try{await connect();}catch(error){disconnect();status(error.message,true);throw error;}
       for(const link of document.querySelectorAll('.advanced a')){const path=link.dataset.nstackApiPath||new URL(link.href).pathname;link.href=endpoint+path;link.target='_blank';link.rel='noopener';}
       status('Verified the selected backend and exact workspace.');
+      });
     }));
   }),preview);document.querySelector('main').prepend(panel);
   $('connect').disabled=true; // The explicit preview choice performs connection and proof.
