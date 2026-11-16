@@ -17,8 +17,15 @@ Consumers must resolve the actual provider package and pin its enrolled durable
 **current signing certificate SHA-256**, not trust authority/name/ownerUid alone.
 The reviewed stable provider certificate SHA-256 is
 `6c0da09b9e2375d657645f197419be7b8227a7434e0225512fc760cedf383c8c`.
-The nightly provider returns `unavailable`; no nightly/debug provider is enrolled. A release certificate mismatch
-must fail closed.
+The canonical published release provider is `com.wingmanbefree.wingman_app.nightly`,
+with current signing certificate SHA-256
+`5edec981796544b29118b53d424ed5067b54cbb0b871d5c37b1cc9ccbc807be0`.
+Stable is separately trusted for diagnostics. The provider supports only these two
+exact application IDs; debug, prefix and other suffix IDs remain denied. Each has
+its own exact `<applicationId>.fips.shared` authority and own UID/runtime binding.
+Consumers must enroll each package/certificate pair separately and reject ambiguous
+provider selection; never choose the first match or fall back between providers.
+A release certificate mismatch must fail closed.
 
 All replies contain `version` Int = 1 and `status` String. Methods:
 

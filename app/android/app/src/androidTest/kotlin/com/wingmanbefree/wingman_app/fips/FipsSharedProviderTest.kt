@@ -15,6 +15,9 @@ class FipsSharedProviderTest {
 
     @Test fun providerIsExplicitAndConsentActivityCannotBeLaunchedByOtherApps() {
         val provider = context.packageManager.resolveContentProvider(authority, 0)!!
+        assertTrue(FipsSharedEnrollment.supportsProvider(context.packageName))
+        assertEquals(authority, provider.authority)
+        assertEquals(context.applicationInfo.uid, provider.applicationInfo.uid)
         assertEquals(context.packageName, provider.packageName)
         assertTrue(provider.exported)
         assertFalse(provider.grantUriPermissions)

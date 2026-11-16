@@ -51,7 +51,11 @@ internal data class FipsSharedEndpoint(val endpoint: String, val peerNpub: Strin
 
 internal data class FipsSharedCaller(val uid: Int, val packageName: String, val certificate: String)
 internal object FipsSharedEnrollment {
-    fun supportsProvider(packageName: String): Boolean = packageName == "com.wingmanbefree.wingman_app"
+    // Application IDs are exact channel identities; never accept prefixes or suffixes.
+    fun supportsProvider(packageName: String): Boolean = when (packageName) {
+        "com.wingmanbefree.wingman_app", "com.wingmanbefree.wingman_app.nightly" -> true
+        else -> false
+    }
 
     fun authorized(caller: FipsSharedCaller, uidPackages: List<String>, currentSigners: List<String>, entries: List<String>): Boolean =
         uidPackages == listOf(caller.packageName) && currentSigners == listOf(caller.certificate) &&

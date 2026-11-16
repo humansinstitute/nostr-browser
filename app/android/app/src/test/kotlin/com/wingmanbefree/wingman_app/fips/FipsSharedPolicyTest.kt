@@ -49,10 +49,17 @@ class FipsSharedPolicyTest {
         assertFalse(FipsSharedEnrollment.authorized(caller.copy(certificate = "debug"), listOf(caller.packageName), listOf("debug"), listOf("${caller.packageName}|debug")))
     }
 
-    @Test fun onlyReviewedStableProviderChannelIsSupported() {
+    @Test fun exactStableAndNightlyProviderChannelsAreSupported() {
         assertTrue(FipsSharedEnrollment.supportsProvider("com.wingmanbefree.wingman_app"))
-        assertFalse(FipsSharedEnrollment.supportsProvider("com.wingmanbefree.wingman_app.nightly"))
-        assertFalse(FipsSharedEnrollment.supportsProvider("example.forged"))
+        assertTrue(FipsSharedEnrollment.supportsProvider("com.wingmanbefree.wingman_app.nightly"))
+    }
+    @Test fun unknownPrefixDebugAndSuffixProviderPackagesAreDenied() {
+        listOf("", "example.forged", "com.wingmanbefree", "com.wingmanbefree.wingman_app.",
+            "com.wingmanbefree.wingman_app.debug", "com.wingmanbefree.wingman_app.nightly.debug",
+            "com.wingmanbefree.wingman_app.nightly.extra", "com.wingmanbefree.wingman_appnightly",
+            "prefix.com.wingmanbefree.wingman_app", "com.wingmanbefree.wingman_app.NIGHTLY").forEach {
+            assertFalse(it, FipsSharedEnrollment.supportsProvider(it))
+        }
     }
     @Test fun missingRuntimeCannotMintRequest() { assertNull(policy.request(caller, endpoint)) }
     @Test fun requestCannotBeUsedUntilConsent() {
