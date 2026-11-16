@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import subprocess
 from release_sources import snapshot
+from verify_android_jni import verify
 
 root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
@@ -48,5 +49,11 @@ subprocess.run(['flutter', 'build', 'apk', '--release', '--target-platform',
 apk = output / 'app/build/app/outputs/flutter-apk/app-release.apk'
 if not apk.exists():
     raise FileNotFoundError(apk)
+sdk = Path(env.get('ANDROID_HOME') or env.get('ANDROID_SDK_ROOT') or
+           Path.home() / 'Library/Android/sdk')
+dexdumps = sorted((sdk / 'build-tools').glob('*/dexdump'))
+if not dexdumps:
+    raise FileNotFoundError('Android SDK dexdump is required to verify release JNI ABI')
+print(verify(apk, dexdumps[-1]))
 print(f'UNSIGNED release APK (owner signing required): {apk}')
 print(f'Source commit: {args.commit}; test build number: {args.build_number}')
