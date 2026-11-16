@@ -6,6 +6,11 @@ Every HTTPS/local browser application reaches approved FIPS HTTP, streaming,
 SSE and WebSocket services through endpoint-scoped `window.fipsTransport`
 handles. Tower, Autopilot, Drive and GRASP/Git do not receive service-specific
 browser bridges. Direct `.fips` navigation remains a distinct routing path.
+Approved native Android apps may request metadata-only readiness and endpoint
+consent for the already-running system VPN through the authenticated
+[shared FIPS provider](android-shared-fips.md). This creates no new runtime,
+identity, signing authority or browser bridge.
+
 Authentication and protocol verification stay above the transport. See
 [`fips-browser-transport.md`](fips-browser-transport.md) for the normative
 contract, compatibility window and platform status.

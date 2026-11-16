@@ -1,0 +1,9 @@
+<resources>
+    <!-- Reviewed public durable current-certificate SHA-256 pins. No debug,
+         nightly, wildcard, installer-name or caller-supplied trust. Certificate
+         rotation requires an explicit reviewed enrollment update. -->
+    <string-array name="fips_shared_clients" translatable="false">
+        <item>com.wingmanbefree.alexandria|47e74d3781655055e86a6873b42c9cf3ed3179d0c481bc4108051246d3ea81aa</item>
+        <item>studio.otherstuff.ambulando.android|95ae1a491e106931a25296797a6e99a9efe95a9e935609e98403afb8e91b816d</item>
+    </string-array>
+</resources>

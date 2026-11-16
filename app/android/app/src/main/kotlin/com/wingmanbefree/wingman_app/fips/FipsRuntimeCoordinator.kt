@@ -95,6 +95,7 @@ internal class FipsRuntimeCoordinator(
         override fun inspectNative(): String = FipsNative.nativeInspect()
 
         override fun stopNative() {
+            FipsSharedRuntime.stop()
             runCatching { FipsNative.nativeStop() }
             FipsVpnService.stop(activity.applicationContext)
         }

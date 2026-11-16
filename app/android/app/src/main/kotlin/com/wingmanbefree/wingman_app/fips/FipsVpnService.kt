@@ -135,6 +135,7 @@ class FipsVpnService : VpnService() {
             failClosed("native_run_failed", "Embedded FIPS did not enter its running state.")
             return
         }
+        FipsSharedRuntime.start(this, ipv6, underlyingNetwork)
         diagnostic("native_running", phase = "readiness", fipsStatus = "running", serviceState = "running", critical = true)
         getSystemService(NotificationManager::class.java)
             .notify(NOTIFICATION_ID, notification("Routing fd00::/8 and .fips DNS"))
@@ -163,6 +164,7 @@ class FipsVpnService : VpnService() {
 
     @Synchronized
     private fun resetForStart() {
+        FipsSharedRuntime.stop()
         // The coordinator owns and sanitizes reset errors so the originating
         // method call is completed rather than silently continuing.
         FipsNative.nativeStop()
@@ -173,6 +175,7 @@ class FipsVpnService : VpnService() {
 
     @Synchronized
     private fun shutdown() {
+        FipsSharedRuntime.stop()
         if (stopped) return
         stopped = true
         runCatching { FipsNative.nativeStop() }
@@ -185,12 +188,14 @@ class FipsVpnService : VpnService() {
     }
 
     override fun onRevoke() {
+        FipsSharedRuntime.stop()
         diagnostic("vpn_revoked", phase = "vpn", consentState = "revoked", serviceState = "stopping")
         executeWorker { shutdown() }
         super.onRevoke()
     }
 
     override fun onDestroy() {
+        FipsSharedRuntime.stop()
         diagnostic("service_destroyed", serviceState = "destroyed", critical = true)
         if (current === this) current = null
         if (!stopped && !worker.isShutdown) {
@@ -297,6 +302,7 @@ class FipsVpnService : VpnService() {
         }
 
         fun stop(context: Context) {
+            FipsSharedRuntime.stop()
             val service = current
             if (service != null) {
                 service.shutdown()
@@ -307,6 +313,7 @@ class FipsVpnService : VpnService() {
         }
 
         fun resetForStart(context: Context) {
+            FipsSharedRuntime.stop()
             val service = current
             if (service != null) {
                 service.resetForStart()
