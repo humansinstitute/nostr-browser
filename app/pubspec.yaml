@@ -43,4 +43,14 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - assets/nstack-shell/manifest.json
+    - assets/nstack-shell/index.html
+    - assets/nstack-shell/ui/assets/shell.js
+    - assets/nstack-shell/ui/assets/console.js
+    - assets/nstack-shell/ui/assets/console.css
+    - assets/nstack-shell/ui/assets/nstack-horizontal-white.svg
+    - assets/nstack-shell/ui/assets/InterVariable.ttf
+    - assets/nstack-shell/ui/assets/Inter-OFL.txt
+    - assets/nstack-shell/ui/assets/crypto.js
+    - assets/nstack-shell/ui/assets/crypto-LICENSE.txt
     - assets/app-selector/

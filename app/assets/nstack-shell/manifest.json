@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "nstack",
+  "sourceRevision": "54b1e74ba868acf0693e9ca187fc465975691deb",
+  "entrypoint": "index.html",
+  "files": {
+    "index.html": {
+      "sha256": "f9b0275a8a500dce2b0b79ddac0d0c061803753e1eab03880b4efa6b53d4fdea",
+      "contentType": "text/html; charset=utf-8"
+    },
+    "ui/assets/shell.js": {
+      "sha256": "27f455e6673f5ff27bcfe96b421a5b578a54e03c11235fc74694ef26e32ff366",
+      "contentType": "text/javascript; charset=utf-8"
+    },
+    "ui/assets/console.js": {
+      "sha256": "1e07ca5ee6463061d6c62d2ded9348e2e6e1035b84b35c7348af6d3573420312",
+      "contentType": "text/javascript; charset=utf-8"
+    },
+    "ui/assets/console.css": {
+      "sha256": "02dd6dedfd30d22c4ae17ea0650e1e775d0dad44c73db3b83fe1951376f5e864",
+      "contentType": "text/css; charset=utf-8"
+    },
+    "ui/assets/nstack-horizontal-white.svg": {
+      "sha256": "ddf9de3cb9aad8c30ee35db6f59878d2295d7816c6598163c9306db879625b70",
+      "contentType": "image/svg+xml"
+    },
+    "ui/assets/InterVariable.ttf": {
+      "sha256": "4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf",
+      "contentType": "font/ttf"
+    },
+    "ui/assets/Inter-OFL.txt": {
+      "sha256": "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a",
+      "contentType": "text/plain; charset=utf-8"
+    },
+    "ui/assets/crypto.js": {
+      "sha256": "f32b648c1c9a1d428d40192288b8120a0799769b5f0f76c2933d3344262f8424",
+      "contentType": "text/javascript; charset=utf-8"
+    },
+    "ui/assets/crypto-LICENSE.txt": {
+      "sha256": "616c6f8d25f9cbdfe7258b98ba22d8ab54ef734c52a520a67c82d04d3f8ae04b",
+      "contentType": "text/plain; charset=utf-8"
+    }
+  }
+}

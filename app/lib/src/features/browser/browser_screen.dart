@@ -14,6 +14,8 @@ import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 import '../../theme/browser_theme.dart';
 import '../../core/app_config.dart';
 import '../../core/retired_bundled_app.dart';
+import '../../core/packaged_nstack_shell.dart';
+import '../../core/nstack_shell_catalogue.dart';
 import '../../core/tower_fips_proxy.dart';
 import '../../core/fips_app_target.dart';
 import '../../core/fips_runtime_service.dart';
@@ -228,6 +230,7 @@ class BrowserScreenState extends State<BrowserScreen>
 
   @override
   void dispose() {
+    unawaited(_nstackShell?.close());
     _downloadCoordinator.dispose();
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_fipsEnabledSubscription?.cancel());
@@ -614,7 +617,8 @@ class BrowserScreenState extends State<BrowserScreen>
                             title: tab.label,
                             url: tab.currentUrl ?? tab.addressController.text,
                             active: tab.id == _activeTabId,
-                            isHome: tab.isHome,
+                            isHome:
+                                tab.isHome || _nstackShellTabs.contains(tab.id),
                             isFips: tab.isFips,
                             loading: tab.navigation.isLoading,
                             previewBytes: tab.previewBytes,
@@ -726,6 +730,9 @@ class BrowserScreenState extends State<BrowserScreen>
   BrowserBookmarkMenuState get _bookmarkMenuState {
     if (_tabs.isEmpty) return const BrowserBookmarkMenuState.unavailable();
     final tab = _activeTab;
+    if (_nstackShellTabs.contains(tab.id)) {
+      return const BrowserBookmarkMenuState.unavailable();
+    }
     final url = canonicalBrowserBookmarkUrl(
       tab.isHome ? null : tab.currentUrl ?? tab.addressController.text,
     );
@@ -738,8 +745,54 @@ class BrowserScreenState extends State<BrowserScreen>
 
   List<BrowserBookmark> get _visibleBookmarks => _bookmarks;
 
+  PackagedNStackShell? _nstackShell;
+  final Set<int> _nstackShellTabs = {};
+  bool _openingNStackShell = false;
+
+  Future<void> _openNStackShell(BrowserTab tab) async {
+    if (_openingNStackShell) return;
+    _openingNStackShell = true;
+    try {
+      final homeUrl = await tab.controller.currentUrl();
+      if (!tab.isHome ||
+          !const ['about:blank', 'https://wingman.local/'].contains(homeUrl)) {
+        return;
+      }
+      if (!await tab.nativeChannelsReady) {
+        throw StateError(
+            'Native main-frame messaging is required (macOS, iOS or Android). Linux is not supported yet.');
+      }
+      final shell = _nstackShell ??=
+          await PackagedNStackShell.fromBundle(nstackShellManifestSha256);
+      if (!mounted) {
+        await shell.close();
+        return;
+      }
+      if (tab.disposed) return;
+      final uri = await shell.start();
+      if (!mounted) {
+        await shell.close();
+        return;
+      }
+      if (tab.disposed) return;
+      _nstackShellTabs.add(tab.id);
+      _loadAddressForTab(tab, uri.toString());
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+                'NStack shell unavailable. Install a build with the verified NStack package. $error')));
+      }
+    } finally {
+      _openingNStackShell = false;
+    }
+  }
+
   SignerPolicy get _signerPolicy => SignerPolicy(
-        trustedOrigins: widget.config.effectiveTrustedOrigins(),
+        trustedOrigins: [
+          ...widget.config.effectiveTrustedOrigins(),
+          if (_nstackShell?.origin != null) _nstackShell!.origin!
+        ],
       );
 
   void _notifyBookmarkMenuState() {
@@ -748,6 +801,7 @@ class BrowserScreenState extends State<BrowserScreen>
 
   Future<void> toggleActivePageBookmark() async {
     final tab = _activeTab;
+    if (_nstackShellTabs.contains(tab.id)) return;
     final url = canonicalBrowserBookmarkUrl(
       tab.isHome ? null : tab.currentUrl ?? tab.addressController.text,
     );
@@ -1394,6 +1448,7 @@ class BrowserScreenState extends State<BrowserScreen>
   }
 
   void _closeTab(int id) {
+    _nstackShellTabs.remove(id);
     final target = _tabById(id);
     if (target == null) return;
     if (id == _activeTabId) _hideAddressBar();
@@ -1502,6 +1557,7 @@ class BrowserScreenState extends State<BrowserScreen>
     }
     setState(() {
       _tabs.clear();
+      _nstackShellTabs.clear();
       _activeTabId = 0;
       _nextTabId = 1;
       _addressBarVisible = false;
@@ -1559,6 +1615,7 @@ class BrowserScreenState extends State<BrowserScreen>
     }
     setState(() {
       _tabs.clear();
+      _nstackShellTabs.clear();
       _activeTabId = 0;
       _nextTabId = 1;
       _addressBarVisible = false;
@@ -1613,13 +1670,13 @@ class BrowserScreenState extends State<BrowserScreen>
             diagnosticsTabKey: tab.diagnosticsTabKey,
             prefix: tab.prefix,
             colour: tab.colour,
-            url: tab.isHome
+            url: (tab.isHome || _nstackShellTabs.contains(tab.id))
                 ? null
                 : (tab.fipsDisabledUrl ??
                         tab.currentUrl ??
                         tab.addressController.text)
                     .trim(),
-            isHome: tab.isHome,
+            isHome: tab.isHome || _nstackShellTabs.contains(tab.id),
           ),
       ],
     );
@@ -1692,6 +1749,9 @@ class BrowserScreenState extends State<BrowserScreen>
     String value, {
     bool hideAddressBarAfterLoad = false,
   }) {
+    if (_nstackShell?.approvesDocument(value) != true) {
+      _nstackShellTabs.remove(tab.id);
+    }
     final normalized = _normalizeAddress(value);
     final uri = Uri.tryParse(normalized);
     if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
@@ -1753,6 +1813,7 @@ class BrowserScreenState extends State<BrowserScreen>
   }
 
   void _loadHomeForTab(BrowserTab tab) {
+    _nstackShellTabs.remove(tab.id);
     setState(() {
       tab.isHome = true;
       tab.currentUrl = null;
@@ -1906,6 +1967,12 @@ class BrowserScreenState extends State<BrowserScreen>
     int tabId,
     NavigationRequest request,
   ) async {
+    if (_nstackShellTabs.contains(tabId) &&
+        (_nstackShell?.allowsNavigation(request.url,
+                isMainFrame: request.isMainFrame) !=
+            true)) {
+      return NavigationDecision.prevent;
+    }
     if (request.isMainFrame &&
         BrowserDownloadPolicy.isDirectFileUrl(request.url)) {
       final accepted = await _downloadCoordinator.start(BrowserDownloadRequest(
@@ -2060,6 +2127,11 @@ class BrowserScreenState extends State<BrowserScreen>
   Future<void> _onPageFinished(int tabId, String url) async {
     final tab = _tabById(tabId);
     if (tab == null) return;
+    if (_nstackShellTabs.contains(tabId) &&
+        _nstackShell?.approvesDocument(url) != true) {
+      tab.revokeSigningDocument();
+      return;
+    }
     _updateNavigationState(tab, () => tab.navigation.pageFinished(url));
     tab.clearDiagnosticsTransition();
     if (tab.isHome &&
@@ -2221,7 +2293,10 @@ class BrowserScreenState extends State<BrowserScreen>
     final uri = Uri.tryParse(origin);
     final approvedLocal = uri?.scheme == 'http' &&
         const ['localhost', '127.0.0.1', '::1'].contains(uri?.host) &&
-        _signerPolicy.trustedOrigins.contains(origin);
+        (_nstackShell?.approvesDocument(url) == true ||
+            SignerPolicy.fromConfig(widget.config)
+                .trustedOrigins
+                .contains(origin));
     if (uri?.scheme != 'https' && !approvedLocal) {
       return;
     }
@@ -3026,6 +3101,11 @@ class BrowserScreenState extends State<BrowserScreen>
                   : 'Could not choose a background.')));
         }
       }
+      return;
+    }
+
+    if (method == 'openNStackShell') {
+      if (tab.isHome) await _openNStackShell(tab);
       return;
     }
 

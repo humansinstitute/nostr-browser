@@ -65,7 +65,7 @@ main>p {background:var(--paper);color:var(--ink);padding:16px;border-radius:8px}
 </style></head><body><main>
 <button class="settings" aria-label="Edit apps and background" aria-expanded="false" aria-controls="settings-panel">⚙</button>
 <div id="settings-panel" hidden><span>Edit your saved apps</span><button data-action="chooseBackground">Choose background</button><button data-action="resetBackground">Default background</button><label>Label colour <input id="label-colour" type="color" value="${safeLabelColour(labelColour)}"></label></div>
-<section class="grid" aria-label="Saved apps">$cards</section>
+<section class="grid" aria-label="Saved apps"><article class="app"><button class="app-open" data-action="openNStackShell" aria-label="Open NStack administration"><span class="icon"><span class="fallback">N</span></span><span class="name">NStack administration</span></button></article>$cards</section>
 ${savedBookmarks.isEmpty ? '<p>No saved apps yet. Use Add bookmark from the browser menu.</p>' : ''}
 </main><script>(() => {
 let seq=0;
