@@ -1842,6 +1842,11 @@ class BrowserScreenState extends State<BrowserScreen>
       setState(() {
         tab.message = 'Home could not be loaded. Open a new tab to retry.';
       });
+      if (tab.id == _activeTabId) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(content: Text(tab.message!)),
+        );
+      }
     }));
     _schedulePersistTabs();
     if (tab.id == _activeTabId) _notifyBookmarkMenuState();
