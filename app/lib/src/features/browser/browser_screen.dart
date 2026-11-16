@@ -1837,6 +1837,11 @@ class BrowserScreenState extends State<BrowserScreen>
         await tab.controller
             .loadHtmlString(html, baseUrl: 'https://wingman.local/');
       }
+    }).catchError((Object error, StackTrace stack) {
+      if (!mounted || tab.disposed || tab.signerDocumentEpoch != epoch) return;
+      setState(() {
+        tab.message = 'Home could not be loaded. Open a new tab to retry.';
+      });
     }));
     _schedulePersistTabs();
     if (tab.id == _activeTabId) _notifyBookmarkMenuState();

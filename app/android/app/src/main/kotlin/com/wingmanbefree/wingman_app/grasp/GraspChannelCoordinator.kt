@@ -21,6 +21,7 @@ class GraspChannelCoordinator(
         // native current URL about:blank. Fix that only for native-owned home
         // content; retain the exact-origin policy used by normal documents.
         fun loadHomeHtml(view: WebView, html: String) {
+            require(NativeHomeHtmlPolicy.accepts(html)) { "Home HTML exceeds native-owned limit" }
             view.loadDataWithBaseURL(HOME_ORIGIN, html, "text/html", "UTF-8", HOME_ORIGIN)
         }
     }
@@ -38,7 +39,7 @@ class GraspChannelCoordinator(
             "loadHomeHtml" -> {
                 val html = call.argument<String>("html")
                 val view = if (destroyed) null else lookup(id)
-                if (view == null || html == null || html.length > GraspMessagePolicy.MAX_MESSAGE_LENGTH) {
+                if (view == null || html == null || !NativeHomeHtmlPolicy.accepts(html)) {
                     result.error("invalid_home", "A live WebView and bounded home HTML are required", null)
                 } else {
                     loadHomeHtml(view, html)
