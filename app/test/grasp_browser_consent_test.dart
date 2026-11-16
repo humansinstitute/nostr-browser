@@ -1,5 +1,6 @@
 // Product wiring tests; these do not substitute for native WebView UX evidence.
 import 'dart:convert';
+import 'package:clock/clock.dart';
 import 'dart:async';
 import 'package:wingman_app/src/core/fips_runtime_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -436,6 +437,47 @@ void main() {
     expect(find.text('Connect to private FIPS service?'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
+  testWidgets('late Once rejects original request once without signing',
+      (tester) async {
+    final h = Harness();
+    final token = await start(h, tester);
+    await connect(token, tester);
+    var now = DateTime.now();
+    await withClock(Clock(() => now), () async {
+      final event = auth()..['created_at'] = now.millisecondsSinceEpoch ~/ 1000;
+      h.sign('expired-approval', event: event);
+      await tester.pumpAndSettle();
+      expect(find.text('Approve private app authentication?'), findsOneWidget);
+      now = now.add(const Duration(seconds: 61));
+      final before = fakeExecutedJavaScripts.length;
+      await tester.tap(find.text('Once'));
+      await tester.pumpAndSettle();
+      expect(h.signer.events, isEmpty);
+      final replies = fakeExecutedJavaScripts
+          .skip(before)
+          .where((s) =>
+              s.contains('window.__wingmanResolve(') &&
+              s.contains('expired-approval'))
+          .toList();
+      expect(replies, hasLength(1));
+      expect(replies.single, contains('Authentication request expired'));
+      expect(replies.single, isNot(contains('test-signature')));
+      await tester.pump(const Duration(seconds: 2));
+      expect(
+          fakeExecutedJavaScripts.skip(before).where((s) =>
+              s.contains('window.__wingmanResolve(') &&
+              s.contains('expired-approval')),
+          hasLength(1));
+    });
+    // A subsequent deliberate request can obtain a fresh approval.
+    h.sign('fresh-after-expiry', event: auth());
+    await tester.pumpAndSettle();
+    expect(find.text('Approve private app authentication?'), findsOneWidget);
+    await tester.tap(find.text('Once'));
+    await tester.pumpAndSettle();
+    expect(h.signer.events, hasLength(1));
+    await tester.pumpWidget(const SizedBox());
+  });
   for (final reason in [
     'navigation',
     'identity',
@@ -468,9 +510,14 @@ void main() {
         // Reconnect's native dialog stacks above the old signature dialog.
         await connect(token, tester);
       }
+      final replyStart = fakeExecutedJavaScripts.length;
       await tester.tap(find.text('Once'));
       await tester.pumpAndSettle();
       expect(h.signer.events, isEmpty);
+      expect(
+          fakeExecutedJavaScripts.skip(replyStart).where((s) =>
+              s.contains('window.__wingmanResolve(') && s.contains('pending')),
+          isEmpty);
       await tester.pumpWidget(const SizedBox());
     });
   }

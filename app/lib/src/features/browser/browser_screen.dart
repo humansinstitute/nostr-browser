@@ -3194,7 +3194,7 @@ class BrowserScreenState extends State<BrowserScreen>
             _isFipsAppUrl(signingPage ?? '') &&
             pageOriginForAuth !=
                 SignerPolicy.normalizeOrigin(widget.config.flightDeckUrl));
-    bool nativeContextValid() =>
+    bool nativeDocumentValid() =>
         ((meshTarget == null && !graspAuth && !directAuth) || _fipsEnabled) &&
         mounted &&
         _tabById(tabId) == tab &&
@@ -3208,13 +3208,31 @@ class BrowserScreenState extends State<BrowserScreen>
         tab.signerDocumentEpoch == documentEpoch &&
         (!graspAuth ||
             (identical(tab.graspBridge, graspDocument) &&
-                graspDocument!.grantEpoch == graspGrantEpoch &&
-                graspDocument.permitsAuthentication(method, signingParams) &&
+                graspDocument!.grantEpoch == graspGrantEpoch));
+    bool nativeContextValid() =>
+        nativeDocumentValid() &&
+        (!graspAuth ||
+            (graspDocument!.permitsAuthentication(method, signingParams) &&
                 (serviceAuthGrant == null ||
                     graspDocument
                             .authenticationGrant(method, signingParams)
                             ?.grantId ==
                         serviceAuthGrant.grantId)));
+    // Cancellation belongs only to the original live document. Expiry never
+    // authorizes stale signing, but must not strand its JavaScript promise.
+    var nativeCancellationSent = false;
+    Future<bool> requireNativeContext() async {
+      if (nativeContextValid()) return true;
+      if (nativeDocumentValid() && !nativeCancellationSent) {
+        nativeCancellationSent = true;
+        await _resolveSignerRequest(tab, requestId, {
+          'error':
+              'Authentication request expired or was cancelled. Retry the request.'
+        });
+      }
+      return false;
+    }
+
     Future<void> auditNativeDenial(String outcome) =>
         widget.signerStore.appendAudit(
           SignerAuditEntry.create(
@@ -3278,11 +3296,11 @@ class BrowserScreenState extends State<BrowserScreen>
         target: nativePolicyTarget,
         deviceNpub: signingIdentity,
       );
-      if (!nativeContextValid()) return;
+      if (!await requireNativeContext()) return;
       if (rule != null && !rule.allows) {
         traceNip42('signer_policy_denied');
         await auditNativeDenial('policy_denied');
-        if (!nativeContextValid()) return;
+        if (!await requireNativeContext()) return;
         await _resolveSignerRequest(
             tab, requestId, {'error': 'denied by signer policy'});
         return;
@@ -3311,10 +3329,10 @@ class BrowserScreenState extends State<BrowserScreen>
       }
       nativeApproved = nativeApproval.approved;
       traceNip42(nativeApproved ? 'signer_approved' : 'signer_denied');
-      if (!nativeContextValid()) return;
+      if (!await requireNativeContext()) return;
       if (!nativeApproved) {
         await auditNativeDenial('user_denied');
-        if (!nativeContextValid()) return;
+        if (!await requireNativeContext()) return;
         await _resolveSignerRequest(tab, requestId, {'error': 'denied'});
         return;
       }
@@ -3330,6 +3348,7 @@ class BrowserScreenState extends State<BrowserScreen>
       }
     }
 
+    if (directAuth && !await requireNativeContext()) return;
     if (!signingContextValid()) {
       await _resolveSignerRequest(tab, requestId, {
         'error': 'fips_signing_scope_required: An active exact FIPS service '
@@ -3413,6 +3432,7 @@ class BrowserScreenState extends State<BrowserScreen>
           label: 'Sign event ${policyTarget.replaceFirst('kind:', 'kind ')}',
         );
       }
+      if (directAuth && !await requireNativeContext()) return;
       if (!signingContextValid()) {
         await _resolveSignerRequest(tab, requestId,
             {'error': 'Mesh pairing or signing identity changed.'});
@@ -3422,6 +3442,7 @@ class BrowserScreenState extends State<BrowserScreen>
         config: widget.config,
         event: event,
       );
+      if (directAuth && !await requireNativeContext()) return;
       if (!signingContextValid()) return;
       if (!result.ok) {
         traceNip42('signer_failed');
@@ -3451,6 +3472,7 @@ class BrowserScreenState extends State<BrowserScreen>
         rememberedApproval:
             !nativeApproved && (remembered || approval.remember),
       );
+      if (directAuth && !await requireNativeContext()) return;
       if (!signingContextValid()) return;
       traceNip42('signer_signed');
       await _resolveSignerRequest(tab, requestId, {
@@ -3583,6 +3605,7 @@ class BrowserScreenState extends State<BrowserScreen>
           ),
         );
       }
+      if (directAuth && !await requireNativeContext()) return;
       if (!signingContextValid()) {
         await _resolveSignerRequest(tab, requestId,
             {'error': 'Mesh pairing or signing identity changed.'});
@@ -3594,6 +3617,7 @@ class BrowserScreenState extends State<BrowserScreen>
         url: requestUrl,
         body: requestBody,
       );
+      if (directAuth && !await requireNativeContext()) return;
       if (!signingContextValid()) return;
       if (!result.ok) {
         await _recordSignerAudit(
@@ -3621,6 +3645,7 @@ class BrowserScreenState extends State<BrowserScreen>
         rememberedApproval:
             !nativeApproved && (remembered || approval.remember),
       );
+      if (directAuth && !await requireNativeContext()) return;
       if (!signingContextValid()) return;
       await _resolveSignerRequest(tab, requestId, {
         'result': result.json['authorization'],

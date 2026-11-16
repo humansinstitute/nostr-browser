@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:clock/clock.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter/services.dart';
@@ -155,7 +156,7 @@ class GraspFipsBrowserBridge {
     final auth = MeshAuthRequest.parse(method, params);
     if (auth == null) return null;
     if (method == 'signEvent' &&
-        (DateTime.now().millisecondsSinceEpoch ~/ 1000 -
+        (clock.now().millisecondsSinceEpoch ~/ 1000 -
                     (params['created_at'] as int))
                 .abs() >
             60) {
@@ -219,7 +220,7 @@ class GraspFipsBrowserBridge {
           p['kind'] != 27235 ||
           p['content'] != '' ||
           tags.length != 5 ||
-          (DateTime.now().millisecondsSinceEpoch ~/ 1000 -
+          (clock.now().millisecondsSinceEpoch ~/ 1000 -
                       (p['created_at'] as int))
                   .abs() >
               60) {
